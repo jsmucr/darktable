@@ -3519,7 +3519,7 @@ msgstr "světlost"
 #: ../src/iop/denoiseprofile.c:3505 ../src/iop/rawdenoise.c:752
 #: ../src/iop/sigmoid.c:299
 msgid "smooth"
-msgstr "plynulé"
+msgstr "vyhlazený"
 
 #: ../build/lib/darktable/plugins/introspection_colorzones.c:268
 msgid "strong"
@@ -13180,7 +13180,7 @@ msgstr "hrubý"
 #: ../src/iop/atrous.c:1393 ../src/iop/atrous.c:1639
 #: ../src/iop/denoiseprofile.c:3496 ../src/iop/rawdenoise.c:743
 msgid "fine"
-msgstr "jemně"
+msgstr "jemný"
 
 #: ../src/iop/atrous.c:1405
 msgid "contrasty"
