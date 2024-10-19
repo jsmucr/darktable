@@ -8397,19 +8397,19 @@ msgstr "kreslená a parametrická maska"
 
 #: ../src/develop/blend_gui.c:168
 msgid "exclusive"
-msgstr "výhradní"
+msgstr "exkluzivně"
 
 #: ../src/develop/blend_gui.c:169
 msgid "inclusive"
-msgstr "včetně"
+msgstr "inkluzivně"
 
 #: ../src/develop/blend_gui.c:170
 msgid "exclusive & inverted"
-msgstr "exkluzivní & obrácený"
+msgstr "exkluzivně s inverzí"
 
 #: ../src/develop/blend_gui.c:171
 msgid "inclusive & inverted"
-msgstr "včetně a invertováno"
+msgstr "inkluzivne s inverzí"
 
 #: ../src/develop/blend_gui.c:175
 msgid "output before blur"
