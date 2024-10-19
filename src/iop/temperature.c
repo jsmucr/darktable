@@ -838,7 +838,7 @@ static void _color_finetuning_slider(struct dt_iop_module_t *self)
   if(!g->colored_sliders) return;
 
   dt_iop_temperature_preset_data_t *preset = dt_bauhaus_combobox_get_data(g->presets);
-  if(preset != NULL)
+  if(GPOINTER_TO_UINT(preset) >= DT_IOP_NUM_OF_STD_TEMP_PRESETS)
   {
     //we can do realistic/exaggerated.
 
@@ -1267,7 +1267,7 @@ void gui_update(struct dt_iop_module_t *self)
           dt_bauhaus_combobox_set(g->presets, j);
           dt_iop_temperature_preset_data_t *preset =
             dt_bauhaus_combobox_get_data(g->presets);
-          if(preset != NULL)
+          if(GPOINTER_TO_UINT(preset) >= DT_IOP_NUM_OF_STD_TEMP_PRESETS)
           {
             show_finetune = preset->min_ft_pos != preset->max_ft_pos;
             if(show_finetune)
@@ -1330,7 +1330,7 @@ void gui_update(struct dt_iop_module_t *self)
               dt_bauhaus_combobox_set(g->presets, j);
               dt_iop_temperature_preset_data_t *preset =
                 dt_bauhaus_combobox_get_data(g->presets);
-              if(preset != NULL)
+              if(GPOINTER_TO_UINT(preset) >= DT_IOP_NUM_OF_STD_TEMP_PRESETS)
               {
                 show_finetune = preset->min_ft_pos != preset->max_ft_pos;
                 if(show_finetune)
@@ -2223,8 +2223,7 @@ void gui_init(struct dt_iop_module_t *self)
                    G_CALLBACK(_preset_tune_callback), self);
 
   // update the gui when the preferences changed (i.e. colored sliders stuff)
-  DT_DEBUG_CONTROL_SIGNAL_CONNECT(darktable.signals, DT_SIGNAL_PREFERENCES_CHANGE,
-                                  G_CALLBACK(_preference_changed), (gpointer)self);
+  DT_CONTROL_SIGNAL_CONNECT(DT_SIGNAL_PREFERENCES_CHANGE, _preference_changed, self);
 
   // start building top level widget
   self->widget = gtk_stack_new();
@@ -2241,8 +2240,7 @@ void gui_init(struct dt_iop_module_t *self)
 void gui_cleanup(struct dt_iop_module_t *self)
 {
   self->request_color_pick = DT_REQUEST_COLORPICK_OFF;
-  DT_DEBUG_CONTROL_SIGNAL_DISCONNECT(darktable.signals,
-                                     G_CALLBACK(_preference_changed), self);
+  DT_CONTROL_SIGNAL_DISCONNECT(_preference_changed, self);
 
   IOP_GUI_FREE;
 }

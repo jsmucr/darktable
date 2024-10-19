@@ -88,7 +88,7 @@ typedef enum dt_import_cols_t
   DT_IMPORT_UI_FILENAME,        // displayed filename
   DT_IMPORT_FILENAME,           // filename
   DT_IMPORT_UI_DATETIME,        // displayed datetime
-  DT_IMPORT_UI_EXISTS,          // whether the picture is already imported
+  DT_IMPORT_UI_EXISTS,          // whether the image is already imported
   DT_IMPORT_DATETIME,           // file datetime
   DT_IMPORT_NUM_COLS
 } dt_import_cols_t;
@@ -459,7 +459,7 @@ static GdkPixbuf *_import_get_thumbnail(const gchar *filename)
     no_preview_fallback = TRUE;
   }
 
-  // Step 1: try to check whether the picture contains embedded thumbnail
+  // Step 1: try to check whether the image contains embedded thumbnail
   // In case it has, we'll use that thumbnail to show on the dialog
   if(!no_preview_fallback)
   {
@@ -926,6 +926,7 @@ void _import_enum_callback(GObject* source_object,
              "[_import_enum_callback] unable to create iterator,"
              " error: %s", error->message);
     g_error_free(error);
+    return;
   }
 
 
@@ -1900,7 +1901,7 @@ static void _set_files_list(GtkWidget *rbox, dt_lib_module_t* self)
   gtk_tree_view_column_set_alignment(column, 0.5);
   gtk_tree_view_column_set_min_width(column, DT_PIXEL_APPLY_DPI(25));
   GtkWidget *header = gtk_tree_view_column_get_button(column);
-  gtk_widget_set_tooltip_text(header, _("mark already imported pictures"));
+  gtk_widget_set_tooltip_text(header, _("mark already imported images"));
 
   renderer = gtk_cell_renderer_text_new();
   column = gtk_tree_view_column_new_with_attributes(_("name"), renderer, "text",
@@ -2465,9 +2466,7 @@ void gui_init(dt_lib_module_t *self)
 
   _lib_import_ui_devices_update(self);
 
-  DT_DEBUG_CONTROL_SIGNAL_CONNECT(darktable.signals,
-                                  DT_SIGNAL_CAMERA_DETECTED, G_CALLBACK(_camera_detected),
-                                  self);
+  DT_CONTROL_SIGNAL_CONNECT(DT_SIGNAL_CAMERA_DETECTED, _camera_detected, self);
 #endif
 
   // collapsible section
@@ -2506,8 +2505,7 @@ void gui_cleanup(dt_lib_module_t *self)
 {
   dt_lib_import_t *d = self->data;
 #ifdef HAVE_GPHOTO2
-  DT_DEBUG_CONTROL_SIGNAL_DISCONNECT(darktable.signals,
-                                     G_CALLBACK(_camera_detected), self);
+  DT_CONTROL_SIGNAL_DISCONNECT(_camera_detected, self);
 #endif
 #ifdef USE_LUA
   detach_lua_widgets(d->extra_lua_widgets);

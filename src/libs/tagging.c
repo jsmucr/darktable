@@ -642,7 +642,7 @@ static void _raise_signal_tag_changed(dt_lib_module_t *self)
     // raises change only for other modules
     dt_control_signal_block_by_func(darktable.signals, G_CALLBACK(_collection_updated_callback), self);
     dt_control_signal_block_by_func(darktable.signals, G_CALLBACK(_lib_tagging_tags_changed_callback), self);
-    DT_DEBUG_CONTROL_SIGNAL_RAISE(darktable.signals, DT_SIGNAL_TAG_CHANGED);
+    DT_CONTROL_SIGNAL_RAISE(DT_SIGNAL_TAG_CHANGED);
     dt_control_signal_unblock_by_func(darktable.signals, G_CALLBACK(_lib_tagging_tags_changed_callback), self);
     dt_control_signal_unblock_by_func(darktable.signals, G_CALLBACK(_collection_updated_callback), self);
   }
@@ -1260,6 +1260,23 @@ static void _pop_menu_attached_find(GtkWidget *menuitem, dt_lib_module_t *self)
                      DT_LIB_TAGGING_COL_TAG, &name, -1);
 
   gtk_entry_set_text(d->entry, name);
+  g_free(name);
+}
+
+static void _pop_menu_attached_clipboard(GtkWidget *menuitem, dt_lib_module_t *self)
+{
+  dt_lib_tagging_t *d = self->data;
+  gchar *path;
+  GtkTreeIter iter;
+  GtkTreeModel *model = NULL;
+  GtkTreeSelection *selection = gtk_tree_view_get_selection(d->attached_view);
+  if(!gtk_tree_selection_get_selected(selection, &model, &iter)) return;
+
+  gtk_tree_model_get(model, &iter,
+                     DT_LIB_TAGGING_COL_PATH, &path, -1);
+
+  gtk_clipboard_set_text(gtk_clipboard_get_default(gdk_display_get_default()), path, -1);
+  g_free(path);
 }
 
 static void _pop_menu_attached(GtkWidget *treeview, GdkEventButton *event, dt_lib_module_t *self)
@@ -1292,6 +1309,10 @@ static void _pop_menu_attached(GtkWidget *treeview, GdkEventButton *event, dt_li
   menuitem = gtk_menu_item_new_with_label(_("find tag"));
   gtk_menu_shell_append(GTK_MENU_SHELL(menu), menuitem);
   g_signal_connect(menuitem, "activate", (GCallback)_pop_menu_attached_find, self);
+
+  menuitem = gtk_menu_item_new_with_label(_("copy to clipboard"));
+  gtk_menu_shell_append(GTK_MENU_SHELL(menu), menuitem);
+  g_signal_connect(menuitem, "activate", (GCallback)_pop_menu_attached_clipboard, self);
 
   gtk_widget_show_all(GTK_WIDGET(menu));
 
@@ -2227,6 +2248,21 @@ static void _pop_menu_dictionary_copy_tag(GtkWidget *menuitem, dt_lib_module_t *
   }
 }
 
+static void _pop_menu_dictionary_clipboard(GtkWidget *menuitem, dt_lib_module_t *self)
+{
+  dt_lib_tagging_t *d = self->data;
+  GtkTreeIter iter;
+  GtkTreeModel *model = gtk_tree_view_get_model(GTK_TREE_VIEW(d->dictionary_view));
+  GtkTreeSelection *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(d->dictionary_view));
+  if(gtk_tree_selection_get_selected(selection, &model, &iter))
+  {
+    char *tag;
+    gtk_tree_model_get(model, &iter, DT_LIB_TAGGING_COL_PATH, &tag, -1);
+    gtk_clipboard_set_text(gtk_clipboard_get_default(gdk_display_get_default()), tag, -1);
+    g_free(tag);
+  }
+}
+
 static void _pop_menu_dictionary_attach_tag(GtkWidget *menuitem, dt_lib_module_t *self)
 {
   dt_lib_tagging_t *d = self->data;
@@ -2314,7 +2350,6 @@ static void _pop_menu_dictionary(GtkWidget *treeview, GdkEventButton *event, dt_
       menuitem = gtk_menu_item_new_with_label(_("edit..."));
       gtk_menu_shell_append(GTK_MENU_SHELL(menu), menuitem);
       g_signal_connect(menuitem, "activate", (GCallback)_pop_menu_dictionary_edit_tag, self);
-
     }
 
     if(d->tree_flag)
@@ -2343,6 +2378,10 @@ static void _pop_menu_dictionary(GtkWidget *treeview, GdkEventButton *event, dt_
     menuitem = gtk_menu_item_new_with_label(_("copy to entry"));
     g_signal_connect(menuitem, "activate", (GCallback)_pop_menu_dictionary_copy_tag, self);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), menuitem);
+
+    menuitem = gtk_menu_item_new_with_label(_("copy to clipboard"));
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), menuitem);
+    g_signal_connect(menuitem, "activate", (GCallback)_pop_menu_dictionary_clipboard, self);
 
     if(d->collection[0])
     {
@@ -3342,14 +3381,10 @@ void gui_init(dt_lib_module_t *self)
   gtk_box_pack_start(box, GTK_WIDGET(hbox), FALSE, TRUE, 0);
 
   /* connect to mouse over id */
-  DT_DEBUG_CONTROL_SIGNAL_CONNECT(darktable.signals, DT_SIGNAL_MOUSE_OVER_IMAGE_CHANGE,
-                            G_CALLBACK(_lib_tagging_redraw_callback), self);
-  DT_DEBUG_CONTROL_SIGNAL_CONNECT(darktable.signals, DT_SIGNAL_TAG_CHANGED,
-                            G_CALLBACK(_lib_tagging_tags_changed_callback), self);
-  DT_DEBUG_CONTROL_SIGNAL_CONNECT(darktable.signals, DT_SIGNAL_SELECTION_CHANGED,
-                            G_CALLBACK(_lib_selection_changed_callback), self);
-  DT_DEBUG_CONTROL_SIGNAL_CONNECT(darktable.signals, DT_SIGNAL_COLLECTION_CHANGED,
-                            G_CALLBACK(_collection_updated_callback), self);
+  DT_CONTROL_SIGNAL_CONNECT(DT_SIGNAL_MOUSE_OVER_IMAGE_CHANGE, _lib_tagging_redraw_callback, self);
+  DT_CONTROL_SIGNAL_CONNECT(DT_SIGNAL_TAG_CHANGED, _lib_tagging_tags_changed_callback, self);
+  DT_CONTROL_SIGNAL_CONNECT(DT_SIGNAL_SELECTION_CHANGED, _lib_selection_changed_callback, self);
+  DT_CONTROL_SIGNAL_CONNECT(DT_SIGNAL_COLLECTION_CHANGED, _collection_updated_callback, self);
 
   d->collection = g_malloc(4096);
   _update_layout(self);
@@ -3365,10 +3400,10 @@ void gui_cleanup(dt_lib_module_t *self)
 {
   dt_lib_tagging_t *d = self->data;
 
-  DT_DEBUG_CONTROL_SIGNAL_DISCONNECT(darktable.signals, G_CALLBACK(_lib_tagging_redraw_callback), self);
-  DT_DEBUG_CONTROL_SIGNAL_DISCONNECT(darktable.signals, G_CALLBACK(_lib_tagging_tags_changed_callback), self);
-  DT_DEBUG_CONTROL_SIGNAL_DISCONNECT(darktable.signals, G_CALLBACK(_lib_selection_changed_callback), self);
-  DT_DEBUG_CONTROL_SIGNAL_DISCONNECT(darktable.signals, G_CALLBACK(_collection_updated_callback), self);
+  DT_CONTROL_SIGNAL_DISCONNECT(_lib_tagging_redraw_callback, self);
+  DT_CONTROL_SIGNAL_DISCONNECT(_lib_tagging_tags_changed_callback, self);
+  DT_CONTROL_SIGNAL_DISCONNECT(_lib_selection_changed_callback, self);
+  DT_CONTROL_SIGNAL_DISCONNECT(_collection_updated_callback, self);
   g_free(d->collection);
   if(d->drag.tagname) g_free(d->drag.tagname);
   if(d->drag.path) gtk_tree_path_free(d->drag.path);

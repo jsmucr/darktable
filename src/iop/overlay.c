@@ -189,7 +189,6 @@ static GList *_get_disabled_modules(const dt_iop_module_t *self,
      There are some exceptions:
        - gamma and finalscale are required
        - crop and &ashift make sense
-       - colorin is good to keep too
      The list order does not matter
   */
 
@@ -207,7 +206,6 @@ static GList *_get_disabled_modules(const dt_iop_module_t *self,
           && !dt_iop_module_is(mod->so, "gamma")
           && !dt_iop_module_is(mod->so, "finalscale")
           && !dt_iop_module_is(mod->so, "crop")
-          && !dt_iop_module_is(mod->so, "colorin")
           && !dt_iop_module_is(mod->so, "ashift"))
     || (is_current
          && ( dt_iop_module_is(mod->so, "overlay")
@@ -991,31 +989,32 @@ static void _drag_and_drop_received(GtkWidget *widget,
       const int index  = self->multi_priority;
       dt_imgid_t *imgs = (dt_imgid_t *)gtk_selection_data_get_data(selection_data);
 
-      const dt_imgid_t imgid = imgs[0];
+      const dt_imgid_t imgid_intended_overlay = imgs[0];
+      const dt_imgid_t imgid_target_image = self->dev->image_storage.id;
 
-      // check for cross-references, that is this imgid should not be using
+      // check for cross-references, that is this imgid_intended_overlay should not be using
       // the current image as overlay.
 
-      if(dt_overlay_used_by(imgid, self->dev->image_storage.id))
+      if(dt_overlay_used_by(imgid_intended_overlay, imgid_target_image))
       {
         dt_control_log
           (_("cannot use image %d as an overlay"
-             " as it is using the current image as an overlay itself"),
-           imgid);
+             " as it is using the current image as an overlay, directly or indirectly"),
+           imgid_intended_overlay);
       }
       else
       {
         // remove previous overlay if valid
         if(dt_is_valid_imgid(p->imgid))
-          dt_overlay_remove(self->dev->image_storage.id, p->imgid);
+          dt_overlay_remove(imgid_target_image, p->imgid);
 
         // and record the new one
-        p->imgid         = imgid;
+        p->imgid         = imgid_intended_overlay;
         _clear_cache_entry(self, index);
 
-        dt_overlay_record(self->dev->image_storage.id, p->imgid);
+        dt_overlay_record(imgid_target_image, imgid_intended_overlay);
 
-        dt_image_full_path(p->imgid, p->filename, sizeof(p->filename), NULL);
+        dt_image_full_path(imgid_intended_overlay, p->filename, sizeof(p->filename), NULL);
 
         dt_dev_add_history_item(darktable.develop, self, TRUE);
 
@@ -1158,22 +1157,17 @@ void gui_init(struct dt_iop_module_t *self)
   gtk_widget_set_tooltip_text(g->scale, _("the scale of the overlay"));
   gtk_widget_set_tooltip_text(g->rotate, _("the rotation of the overlay"));
 
-  DT_DEBUG_CONTROL_SIGNAL_CONNECT(darktable.signals, DT_SIGNAL_DEVELOP_MODULE_REMOVE,
-                                  G_CALLBACK(_module_remove_callback), self);
+  DT_CONTROL_SIGNAL_CONNECT(DT_SIGNAL_DEVELOP_MODULE_REMOVE, _module_remove_callback, self);
 
-  DT_DEBUG_CONTROL_SIGNAL_CONNECT(darktable.signals, DT_SIGNAL_DEVELOP_IMAGE_CHANGED,
-                                  G_CALLBACK(_signal_image_changed), self);
+  DT_CONTROL_SIGNAL_CONNECT(DT_SIGNAL_DEVELOP_IMAGE_CHANGED, _signal_image_changed, self);
 }
 
 void gui_cleanup(struct dt_iop_module_t *self)
 {
   IOP_GUI_FREE;
 
-  DT_DEBUG_CONTROL_SIGNAL_DISCONNECT(darktable.signals,
-                                     G_CALLBACK(_module_remove_callback), self);
-
-  DT_DEBUG_CONTROL_SIGNAL_DISCONNECT(darktable.signals,
-                                     G_CALLBACK(_signal_image_changed), self);
+  DT_CONTROL_SIGNAL_DISCONNECT(_module_remove_callback, self);
+  DT_CONTROL_SIGNAL_DISCONNECT(_signal_image_changed, self);
 }
 
 // clang-format off

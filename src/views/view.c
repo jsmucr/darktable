@@ -303,9 +303,8 @@ gboolean dt_view_manager_switch_by_view(dt_view_manager_t *vm,
     const gboolean error = new_view->try_enter(new_view);
     if(error)
     {
-      DT_DEBUG_CONTROL_SIGNAL_RAISE(darktable.signals,
-                                    DT_SIGNAL_VIEWMANAGER_VIEW_CANNOT_CHANGE,
-                                    old_view, new_view);
+      DT_CONTROL_SIGNAL_RAISE(DT_SIGNAL_VIEWMANAGER_VIEW_CANNOT_CHANGE,
+                              old_view, new_view);
       return error;
     }
   }
@@ -433,14 +432,13 @@ gboolean dt_view_manager_switch_by_view(dt_view_manager_t *vm,
   if(vm->accels_window.window && vm->accels_window.sticky) dt_view_accels_refresh(vm);
 
   /* raise view changed signal */
-  DT_DEBUG_CONTROL_SIGNAL_RAISE(darktable.signals,
-                                DT_SIGNAL_VIEWMANAGER_VIEW_CHANGED, old_view, new_view);
+  DT_CONTROL_SIGNAL_RAISE(DT_SIGNAL_VIEWMANAGER_VIEW_CHANGED, old_view, new_view);
 
   // update log visibility
-  DT_DEBUG_CONTROL_SIGNAL_RAISE(darktable.signals, DT_SIGNAL_CONTROL_LOG_REDRAW);
+  DT_CONTROL_SIGNAL_RAISE(DT_SIGNAL_CONTROL_LOG_REDRAW);
 
   // update toast visibility
-  DT_DEBUG_CONTROL_SIGNAL_RAISE(darktable.signals, DT_SIGNAL_CONTROL_TOAST_REDRAW);
+  DT_CONTROL_SIGNAL_RAISE(DT_SIGNAL_CONTROL_TOAST_REDRAW);
   return FALSE;
 }
 
@@ -1091,14 +1089,14 @@ void dt_view_active_images_reset(const gboolean raise)
   darktable.view_manager->active_images = NULL;
 
   if(raise)
-    DT_DEBUG_CONTROL_SIGNAL_RAISE(darktable.signals, DT_SIGNAL_ACTIVE_IMAGES_CHANGE);
+    DT_CONTROL_SIGNAL_RAISE(DT_SIGNAL_ACTIVE_IMAGES_CHANGE);
 }
 void dt_view_active_images_add(dt_imgid_t imgid, gboolean raise)
 {
   darktable.view_manager->active_images =
     g_slist_append(darktable.view_manager->active_images, GINT_TO_POINTER(imgid));
   if(raise)
-    DT_DEBUG_CONTROL_SIGNAL_RAISE(darktable.signals, DT_SIGNAL_ACTIVE_IMAGES_CHANGE);
+    DT_CONTROL_SIGNAL_RAISE(DT_SIGNAL_ACTIVE_IMAGES_CHANGE);
 }
 GSList *dt_view_active_images_get()
 {
@@ -1741,10 +1739,19 @@ void dt_view_paint_surface(cairo_t *cr,
   cairo_scale(cr, zoom_scale, zoom_scale);
 
   const double back_scale = (buf_scale == 0 ? 1.0 : backbuf_scale / buf_scale) * (1<<closeup) / ppd;
+  const double trans_x = (offset_x - zoom_x) * processed_width * buf_scale - 0.5 * buf_width;
+  const double trans_y = (offset_y - zoom_y) * processed_height * buf_scale - 0.5 * buf_height;
 
   if(dev->preview_pipe->output_imgid == dev->image_storage.id
+     && (port->pipe->output_imgid != dev->image_storage.id
+         || fabsf(backbuf_scale / buf_scale - 1.0f) > .09f
+         || floor(maxw / 2 / back_scale) - 1 > MIN(- trans_x, trans_x + buf_width)
+         || floor(maxh / 2 / back_scale) - 1 > MIN(- trans_y, trans_y + buf_height))
      && (port == &dev->full || port == &dev->preview2))
   {
+    if(port->pipe->status == DT_DEV_PIXELPIPE_VALID)
+      port->pipe->status = DT_DEV_PIXELPIPE_DIRTY;
+
     // draw preview
     float wd = processed_width * dev->preview_pipe->processed_width / MAX(1, dev->full.pipe->processed_width);
     float ht = processed_height * dev->preview_pipe->processed_width / MAX(1, dev->full.pipe->processed_width);
@@ -1786,9 +1793,7 @@ void dt_view_paint_surface(cairo_t *cr,
          buf_zoom_x, buf_zoom_y,
          offset_x, offset_y);
     cairo_scale(cr, back_scale / zoom_scale, back_scale / zoom_scale);
-    cairo_translate(cr, (offset_x - zoom_x) * processed_width * buf_scale - 0.5 * buf_width,
-                        (offset_y - zoom_y) * processed_height * buf_scale - 0.5 * buf_height);
-
+    cairo_translate(cr, trans_x, trans_y);
     cairo_surface_t *surface = dt_view_create_surface(buf, buf_width, buf_height);
     cairo_set_source_surface(cr, surface, 0, 0);
     cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_FAST);

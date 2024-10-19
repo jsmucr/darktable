@@ -218,7 +218,9 @@ static void save_usercss_callback(GtkWidget *widget, gpointer user_data)
   }
 }
 
-static void usercss_dialog_callback(GtkDialog *dialog, gint response_id, gpointer user_data)
+static void usercss_dialog_callback(GtkDialog *dialog,
+                                    gint response_id,
+                                    gpointer user_data)
 {
   //just save the latest css but don't reload the theme
   dt_gui_themetweak_widgets_t *tw = (dt_gui_themetweak_widgets_t *)user_data;
@@ -230,7 +232,7 @@ static void usercss_dialog_callback(GtkDialog *dialog, gint response_id, gpointe
 
 static void language_callback(GtkWidget *widget, gpointer user_data)
 {
-  int selected = dt_bauhaus_combobox_get(widget);
+  const int selected = dt_bauhaus_combobox_get(widget);
   dt_l10n_language_t *language = g_list_nth_data(darktable.l10n->languages, selected);
   if(darktable.l10n->sys_default == selected)
   {
@@ -245,7 +247,9 @@ static void language_callback(GtkWidget *widget, gpointer user_data)
   restart_required = TRUE;
 }
 
-static gboolean reset_language_widget(GtkWidget *label, GdkEventButton *event, GtkWidget *widget)
+static gboolean reset_language_widget(GtkWidget *label,
+                                      GdkEventButton *event,
+                                      GtkWidget *widget)
 {
   if(event->type == GDK_2BUTTON_PRESS)
   {
@@ -313,6 +317,7 @@ static void init_tab_general(GtkWidget *dialog, GtkWidget *stack, dt_gui_themetw
   }
 
   dt_bauhaus_combobox_set(widget, darktable.l10n->selected);
+  dt_bauhaus_combobox_set_default(widget, darktable.l10n->sys_default);
   g_signal_connect(G_OBJECT(widget), "value-changed", G_CALLBACK(language_callback), 0);
   gtk_widget_set_tooltip_text(labelev,  _("double-click to reset to the system language"));
   gtk_event_box_set_visible_window(GTK_EVENT_BOX(labelev), FALSE);
@@ -571,7 +576,7 @@ void dt_gui_preferences_show()
   if(restart_required)
     dt_control_log(_("darktable needs to be restarted for settings to take effect"));
 
-  DT_DEBUG_CONTROL_SIGNAL_RAISE(darktable.signals, DT_SIGNAL_PREFERENCES_CHANGE);
+  DT_CONTROL_SIGNAL_RAISE(DT_SIGNAL_PREFERENCES_CHANGE);
 }
 
 static void cairo_destroy_from_pixbuf(guchar *pixels, gpointer data)
@@ -1362,4 +1367,3 @@ GtkWidget *dt_gui_preferences_string(GtkGrid *grid, const char *key, const guint
 // vim: shiftwidth=2 expandtab tabstop=2 cindent
 // kate: tab-indents: off; indent-width 2; replace-tabs on; indent-mode cstyle; remove-trailing-spaces modified;
 // clang-format on
-

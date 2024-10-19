@@ -477,7 +477,7 @@ restart:
   dt_pthread_mutex_unlock(&pipe->mutex);
 
   if(dev->gui_attached && !dev->gui_leaving && signal != -1)
-    DT_DEBUG_CONTROL_SIGNAL_RAISE(darktable.signals, signal);
+    DT_CONTROL_SIGNAL_RAISE(signal);
 
   if(port) return;
 
@@ -1030,7 +1030,7 @@ static void _dev_add_history_item(dt_develop_t *dev,
   {
     /* signal that history has changed */
     if(tag_change)
-      DT_DEBUG_CONTROL_SIGNAL_RAISE(darktable.signals, DT_SIGNAL_TAG_CHANGED);
+      DT_CONTROL_SIGNAL_RAISE(DT_SIGNAL_TAG_CHANGED);
 
     /* redraw */
     dt_control_queue_redraw_center();
@@ -2803,17 +2803,10 @@ void dt_dev_zoom_move(dt_dev_viewport_t *port,
      && old_closeup == port->closeup)
     return;
 
+  if(port->widget)
+    dt_control_queue_redraw_widget(port->widget);
   if(port == &dev->full)
-  {
-    dt_dev_invalidate(dev); // FIXME not needed? redraw should determines if needs new calculation
-    dt_control_queue_redraw_center();
     dt_control_navigation_redraw();
-  }
-  else if(port == &dev->preview2 && dev->second_wnd)
-  {
-    dev->preview2.pipe->status = DT_DEV_PIXELPIPE_DIRTY;
-    dt_control_queue_redraw_widget(dev->second_wnd);
-  }
 }
 
 void dt_dev_get_pointer_zoom_pos(dt_dev_viewport_t *port,
@@ -3183,8 +3176,7 @@ void dt_dev_module_remove(dt_develop_t *dev,
     /* signal that history has changed */
     dt_dev_undo_end_record(dev);
 
-    DT_DEBUG_CONTROL_SIGNAL_RAISE(darktable.signals,
-                                  DT_SIGNAL_DEVELOP_MODULE_REMOVE, module);
+    DT_CONTROL_SIGNAL_RAISE(DT_SIGNAL_DEVELOP_MODULE_REMOVE, module);
     /* redraw */
     dt_control_queue_redraw_center();
   }
@@ -3436,8 +3428,7 @@ void dt_dev_undo_start_record(dt_develop_t *dev)
 {
   /* record current history state : before change (needed for undo) */
   if(dev->gui_attached && dt_view_get_current() == DT_VIEW_DARKROOM)
-    DT_DEBUG_CONTROL_SIGNAL_RAISE(darktable.signals,
-                                  DT_SIGNAL_DEVELOP_HISTORY_WILL_CHANGE);
+    DT_CONTROL_SIGNAL_RAISE(DT_SIGNAL_DEVELOP_HISTORY_WILL_CHANGE);
 
   dev->gui_previous_target = NULL;
 }
@@ -3446,7 +3437,7 @@ void dt_dev_undo_end_record(dt_develop_t *dev)
 {
   /* record current history state : after change (needed for undo) */
   if(dev->gui_attached && dt_view_get_current() == DT_VIEW_DARKROOM)
-    DT_DEBUG_CONTROL_SIGNAL_RAISE(darktable.signals, DT_SIGNAL_DEVELOP_HISTORY_CHANGE);
+    DT_CONTROL_SIGNAL_RAISE(DT_SIGNAL_DEVELOP_HISTORY_CHANGE);
 }
 
 void dt_dev_image(const dt_imgid_t imgid,

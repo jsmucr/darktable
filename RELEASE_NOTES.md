@@ -61,6 +61,10 @@ changes (where available).
   cursor (such as a stopwatch or spinner) or a progress bar with
   option to cancel the remainder of the operation.
 
+- Paths for drawn masks now display two Bézier handles per control point,
+  which can be moved individually. This allows for more precise control
+  of the paths.
+
 - Added a high-contrast theme with bright white text on a dark gray
   background.
 
@@ -167,6 +171,35 @@ changes (where available).
 - Expose encoding speed control for AVIF export: trades off export
   time for file size and quality.
 
+- Tag names can now easily be copied to the clipboard via popup
+  context menu in the tagging module.
+
+- The piwigo export storage now supports to specify a file name
+  pattern for the exported file.
+
+- The directory where darktable will write the log file under Windows
+  has been changed to %USERPROFILE%\Documents\Darktable. This allows
+  the user to easily see where the log file is located without even
+  having to search for it in the documentation or FAQ. The previous
+  location was deep in the system subdirectories of the user profile,
+  and also under a hidden directory (so it was impossible to click to
+  it in File Explorer with default system settings).
+
+- Allow import of JPEG 2000 files with .jpf and .jpx file extensions.
+
+- Add a visible indicator to the color calibration module when its
+  color mapping section has non-neutral settings which will affect
+  color rendition..
+
+- Added new substitution variables $(IMAGE.TAGS.HIERARCHY) to insert
+  tags with full hierarchy and $(IMAGE.ID.NEXT) to insert the image ID
+  to be assigned to the image being imported, allowing the image ID to
+  be part of the filename generated during a copy&import operation.
+
+- Exporting to floating-point JPEG XL with a quality of 100 will try
+  to do it as losslessly as possible. That is now consistent with the
+  behavior of integral JPEG XL formats.
+
 ## Bug Fixes
 
 - Fixed a performance regression for redrawing mipmaps.
@@ -202,6 +235,28 @@ changes (where available).
 
 - Properly reset darktable internal tag darktable|style|<name> and
   darktable|changed when resetting history.
+
+- Fixed crash in the piwigo export storage when not logged in to the
+  piwigo server.
+
+- Fixed a bug in the export module where it was impossible to export a
+  file again if "on conflict: overwrite if changed" was selected.
+
+- Fixed a bug where double clicking on a label in darkroom modules
+  does not reset the control.
+
+- The composite module now prevents assigning an overlay that would
+  lead to a loop. Previously, only direct references
+  (image #1 <-> image #2) were checked; this has now been extended
+  to also cover chains (image #1 -> image #2 -> image #3 -> image #1)
+  of arbitrary length.
+
+- Fix a bug in overlay module which incorrectly apply a color profile
+  and so creating an unwanted and wrong color cast. This bug was a
+  regression added just before the 4.8 release.
+
+- Fixed a bug in color calibration module where switching between
+  various illuminants could lead to unpredictable settings.
 
 ## Lua
 
