@@ -2751,7 +2751,7 @@ msgstr "iterace"
 #: ../build/lib/darktable/plugins/introspection_cacorrect.c:109
 #: ../build/lib/darktable/plugins/introspection_demosaic.c:205
 msgid "once"
-msgstr "jendou"
+msgstr "jednou"
 
 #: ../build/lib/darktable/plugins/introspection_cacorrect.c:110
 #: ../build/lib/darktable/plugins/introspection_demosaic.c:206
