@@ -7280,12 +7280,12 @@ msgstr "přímé slunce"
 
 #: ../src/common/wb_presets.c:45
 msgid "cloudy"
-msgstr "zataženo"
+msgstr "oblačno"
 
 #. "Shadows" should be switched to this:
 #: ../src/common/wb_presets.c:47
 msgid "shade"
-msgstr "odstín"
+msgstr "stín"
 
 #: ../src/common/wb_presets.c:48
 msgid "incandescent"
