@@ -6505,6 +6505,43 @@ zero crossing, the one estimator no instrument bias can move. That last is the
 only principled route and it is a developer decision, since it changes what
 ships.
 
+### The per-context panic was an artefact of a biased estimator (session 52)
+
+Per-context residual zero crossings, 27 frames, two renders each, exploiting the
+linearity established in session 37 so no ladder was needed. Effective strength
+at which the residual vanishes, median with 16th to 84th percentiles:
+
+    ctx  band    blue                  red
+     0   mid     0.47 [0.38 0.53]      1.01 [0.94 1.28]
+     0   outer   0.63 [0.45 0.88]      1.14 [1.05 1.31]
+     1   mid     0.79 [0.45 1.56]      0.43 [0.29 0.77]
+     1   outer   1.30 [0.52 1.71]      0.55 [0.29 0.83]
+     3   mid     0.80 [0.71 1.55]      0.56 [0.52 0.64]
+     3   outer   1.04 [0.77 1.31]      0.77 [0.75 1.04]
+     4   mid     0.54 [0.48 0.81]      0.52 [0.42 0.91]
+     4   outer   0.68 [0.45 1.16]      0.53 [0.35 0.84]
+
+Context 2 yielded one or two crossings and is unusable. 16 of 108 rows did not
+cross inside 0 to 2, nearly all where both residuals sit at the 0.03 to 0.10 px
+noise floor.
+
+**Nothing wants 0.2.** Session 51's alarming table, which put the S-series at
+0.19 to 0.28, came from the reverse regression, which is the *lower* bound of
+the strength bracket. Measured without that bias the same bodies want 0.43 to
+1.30. The lowest well-anchored median anywhere is 0.47.
+
+**And no per-context law survives.** The channels swap between contexts: blue
+0.47 with red 1.01 in context 0, blue 0.79 with red 0.43 in context 1. A real
+per-context convention error would not reverse which channel needs more. The
+intervals also overlap heavily, ctx0's blue median falling inside ctx1's blue
+range. Medians differ; confidence intervals do not separate.
+
+So per-context constants are **not** justified, five of them fitted on this
+would be noise, and the single multiplier stands. The unbiased grand central
+value sits near 0.6 rather than 0.5, with 0.5 inside almost every interval, so
+the shipped value remains the conservative choice for a correction whose
+failure mode is reversed fringing.
+
 ## Scope and goal
 
 Set by the developer, post-session-21, and it settles two things this
