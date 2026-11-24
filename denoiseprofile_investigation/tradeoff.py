@@ -10,6 +10,9 @@
 #   wall chroma  RMS spread of Lab a and b on the wall crop, x100
 #   wall mottle  luminance band 2-16 px on the wall (blur 2 minus blur 16),
 #                the blotches wall noise is too fine to see
+#   specks       wall pixels more than 10% of the mean off their 5x5 median
+#   grass specks the same on the grass crop, where texture lowers the
+#                local thresholds; counts texture too (the JPEG has 1954)
 # with equal wall noise, more bird detail means less structure was removed.
 # A robust (MAD) measure was tried first and collapses to 0 on smoothed
 # output while ignoring specks and mottle.
@@ -18,6 +21,7 @@ import sys
 
 WALL = '360x260+1900+500'
 BIRD = '360x260+2050+2050'
+GRASS = '360x260+600+3300'
 
 
 def hp_rms(path, geo, fine='0', coarse='0x6'):
@@ -45,12 +49,26 @@ def chroma_rms(path, geo):
     return 100 * (float(out[1]) ** 2 + float(out[2]) ** 2) ** 0.5
 
 
+def specks(path, geo):
+    # pixels more than 10% of the crop mean away from their 5x5 median
+    m = subprocess.run(['convert', path, '-crop', geo, '+repage', '-colorspace',
+                        'gray', '-format', '%[fx:mean]', 'info:'],
+                       capture_output=True, check=True, text=True).stdout
+    out = subprocess.run(
+        ['convert', path, '-crop', geo, '+repage', '-colorspace', 'gray',
+         '(', '+clone', '-statistic', 'median', '5x5', ')',
+         '-compose', 'difference', '-composite', '-evaluate', 'divide', m,
+         '-threshold', '10%', '-format', '%[fx:round(mean*w*h)]', 'info:'],
+        capture_output=True, check=True, text=True).stdout
+    return int(out)
+
+
 print(f'{"render":24s} wall noise  bird detail  ratio  wall chroma'
-      '  wall mottle')
+      '  wall mottle  specks  grass specks')
 for p in sys.argv[1:]:
     w, b = hp_rms(p, WALL), hp_rms(p, BIRD)
     c = chroma_rms(p, WALL)
     m = hp_rms(p, WALL, '0x2', '0x16')
     name = p.rsplit('/', 1)[-1].removesuffix('.png')
     print(f'{name:24s} {w:10.4f}  {b:11.4f}  {b / w:5.2f}  {c:11.3f}'
-          f'  {m:11.4f}')
+          f'  {m:11.4f}  {specks(p, WALL):6d}  {specks(p, GRASS):12d}')

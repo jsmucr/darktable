@@ -93,7 +93,7 @@ VARIANTS = {
 for s in (1.0, 1.5, 2.0, 3.0, 4.0):
     VARIANTS[f'sw_old_s{s}'] = [('denoiseprofile', 12, denoiseprofile(
         strength=s, chroma=0.8, shadows=0.5))]
-for s in (0.75, 1.0, 1.25, 1.5, 2.0):
+for s in (0.75, 1.0, 1.1, 1.15, 1.25, 1.5, 2.0):
     VARIANTS[f'sw_bn_s{s}'] = [('denoiseprofile', 12, denoiseprofile(
         strength=s, chroma=1.0, shadows=0.5))]
 

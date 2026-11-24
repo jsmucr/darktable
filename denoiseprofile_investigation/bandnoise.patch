@@ -1,16 +1,17 @@
 diff --git a/src/iop/denoiseprofile.c b/src/iop/denoiseprofile.c
-index 784d46e509..257cb5a5ab 100644
+index 784d46e509..404f366f95 100644
 --- a/src/iop/denoiseprofile.c
 +++ b/src/iop/denoiseprofile.c
-@@ -24,6 +24,7 @@
+@@ -24,6 +24,8 @@
  #include "common/nlmeans_core.h"
  #include "common/noiseprofiles.h"
  #include "common/opencl.h"
++#include "common/box_filters.h"
 +#include "common/pfm.h"
  #include "control/control.h"
  #include "develop/blend.h"
  #include "develop/imageop.h"
-@@ -192,6 +193,7 @@ typedef struct dt_iop_denoiseprofile_data_t
+@@ -192,6 +194,7 @@ typedef struct dt_iop_denoiseprofile_data_t
    gboolean fix_anscombe_and_nlmeans_norm; // backward compatibility options
    gboolean use_new_vst;                   // backward compatibility options
    dt_iop_denoiseprofile_wavelet_mode_t wavelet_color_mode; // switch between RGB and Y0U0V0 modes.
@@ -18,7 +19,7 @@ index 784d46e509..257cb5a5ab 100644
  } dt_iop_denoiseprofile_data_t;
  
  typedef struct dt_iop_denoiseprofile_global_data_t
-@@ -236,6 +238,37 @@ static void debug_dump_PFM(const dt_dev_pixelpipe_iop_t *const piece,
+@@ -236,6 +239,37 @@ static void debug_dump_PFM(const dt_dev_pixelpipe_iop_t *const piece,
    dt_dump_pfm(name, buf, width, height,  4 * sizeof(float), "denoiseprofile");
  }
  
@@ -56,7 +57,7 @@ index 784d46e509..257cb5a5ab 100644
  /* old legacy_params routine used up to v11
     this is now called into the legacy_params supporting incremental
     updates. It was too risky to rewrite the old legacy params support
-@@ -1350,6 +1383,7 @@ static void variance_stabilizing_xform(dt_aligned_pixel_t thrs,
+@@ -1350,6 +1384,7 @@ static void variance_stabilizing_xform(dt_aligned_pixel_t thrs,
                                         const int max_scale,
                                         const size_t npixels,
                                         const float *const sum_y2,
@@ -64,7 +65,7 @@ index 784d46e509..257cb5a5ab 100644
                                         const dt_iop_denoiseprofile_data_t *const d)
  {
    // variance stabilizing transform maps sigma to unity.
-@@ -1357,8 +1391,12 @@ static void variance_stabilizing_xform(dt_aligned_pixel_t thrs,
+@@ -1357,8 +1392,12 @@ static void variance_stabilizing_xform(dt_aligned_pixel_t thrs,
    // it is then transformed by wavelet scales via the 5 tap a-trous filter:
    const float varf = sqrtf(2.0f + 2.0f * 4.0f * 4.0f + 6.0f * 6.0f) / 16.0f; // about 0.5
    const float sigma_band = powf(varf, scale) * sigma;
@@ -79,7 +80,7 @@ index 784d46e509..257cb5a5ab 100644
  
    const dt_aligned_pixel_t var_y =
      { sum_y2[0] / (npixels - 1.0f),
-@@ -1367,13 +1405,15 @@ static void variance_stabilizing_xform(dt_aligned_pixel_t thrs,
+@@ -1367,13 +1406,15 @@ static void variance_stabilizing_xform(dt_aligned_pixel_t thrs,
        0.0f };
  
    const dt_aligned_pixel_t std_x =
@@ -100,7 +101,7 @@ index 784d46e509..257cb5a5ab 100644
  
    const int offset_scale = DT_IOP_DENOISE_PROFILE_BANDS - max_scale;
    const int band_index = DT_IOP_DENOISE_PROFILE_BANDS - (scale + offset_scale + 1);
-@@ -1420,7 +1460,56 @@ static void variance_stabilizing_xform(dt_aligned_pixel_t thrs,
+@@ -1420,7 +1461,56 @@ static void variance_stabilizing_xform(dt_aligned_pixel_t thrs,
      adjt[2] *= band_force_exp_2;
    }
    for_each_channel(c)
@@ -158,7 +159,7 @@ index 784d46e509..257cb5a5ab 100644
  }
  
  static void process_wavelets(dt_iop_module_t *self,
-@@ -1552,6 +1641,27 @@ static void process_wavelets(dt_iop_module_t *self,
+@@ -1552,9 +1642,45 @@ static void process_wavelets(dt_iop_module_t *self,
  
    debug_dump_PFM(piece, "transformed", precond, width, height, 0);
  
@@ -186,7 +187,25 @@ index 784d46e509..257cb5a5ab 100644
    float *restrict buf1 = precond;
    float *restrict buf2 = tmp;
  
-@@ -1571,7 +1681,39 @@ static void process_wavelets(dt_iop_module_t *self,
++  // DT_DN_BNLOCAL=<radius at scale 0>, DT_DN_BNLKMIN=<k>: local thresholds
++  const int local_r = band_noise && g_getenv("DT_DN_BNLOCAL")
++    ? atoi(g_getenv("DT_DN_BNLOCAL")) : 0;
++  const float local_kmin = g_getenv("DT_DN_BNLKMIN")
++    ? atof(g_getenv("DT_DN_BNLKMIN")) : 0.0f;
++  const gboolean local_loo = g_getenv("DT_DN_BNLOO") != NULL;
++  float *const local = local_r > 0 ? dt_alloc_align_float(4 * npixels) : NULL;
++  if(local_r > 0 && !local)
++  {
++    dt_free_align(buf);
++    dt_free_align(tmp);
++    dt_free_align(precond);
++    return;
++  }
++
+   // clear the output buffer, which will be accumulating all of the detail scales
+   dt_iop_image_fill(out, 0.0f, width, height, 4);
+ 
+@@ -1571,7 +1697,82 @@ static void process_wavelets(dt_iop_module_t *self,
  
      const dt_aligned_pixel_t boost = { 1.0f, 1.0f, 1.0f, 1.0f };
      dt_aligned_pixel_t thrs;
@@ -214,6 +233,8 @@ index 784d46e509..257cb5a5ab 100644
 +    { char nm[32]; snprintf(nm, sizeof(nm), "detail_%d", scale); _inv_dump(piece, roi_in, nm, buf); }
 +    variance_stabilizing_xform(thrs, scale, max_scale, npixels, sum_y2,
 +                               band_noise ? band_sigma : NULL, d);
++    dt_aligned_pixel_t thrs_bayes;
++    copy_pixel(thrs_bayes, thrs);
 +    if(g_getenv("DT_DN_BNK") && band_noise)
 +      for(int c = 0; c < 3; c++)
 +        thrs[c] = atof(g_getenv("DT_DN_BNK")) * band_sigma[c] / d->strength;
@@ -224,10 +245,51 @@ index 784d46e509..257cb5a5ab 100644
 +      fprintf(stderr, "[thr] scale %d thrs %g %g %g std_y %g %g %g\n", scale,
 +              thrs[0], thrs[1], thrs[2], sqrtf(sum_y2[0] / (npixels - 1.0f)),
 +              sqrtf(sum_y2[1] / (npixels - 1.0f)), sqrtf(sum_y2[2] / (npixels - 1.0f)));
++    if(band_noise && local_r > 0)
++    {
++      // BayesShrink with sigma_x from a window around each coefficient
++      // instead of the whole band: the window grows with the scale so it
++      // holds about the same number of independent coefficients
++      const size_t r = MIN((size_t)local_r << scale,
++                           (size_t)MIN(width, height) / 4);
++      dt_aligned_pixel_t sb2, num, kfloor;
++      for(int c = 0; c < 3; c++)
++      {
++        sb2[c] = band_sigma[c] * band_sigma[c];
++        const float vy = sum_y2[c] / (npixels - 1.0f);
++        num[c] = thrs_bayes[c] * sqrtf(MAX(1e-6f, vy - sb2[c]));
++        kfloor[c] = local_kmin * band_sigma[c] / d->strength;
++      }
++      DT_OMP_FOR()
++      for(size_t k = 0; k < npixels; k++)
++        for_four_channels(c)
++          local[4 * k + c] = buf[4 * k + c] * buf[4 * k + c];
++      dt_box_mean(local, height, width, 4, r, 1);
++      // interior window size; dt_box_mean averages fewer pixels at the edges
++      const float local_n = (2.0f * r + 1.0f) * (2.0f * r + 1.0f);
++      DT_OMP_FOR()
++      for(size_t k = 0; k < npixels; k++)
++      {
++        for(int c = 0; c < 3; c++)
++        {
++          const float v = buf[4 * k + c];
++          // leave-one-out: without it an outlier raises its own window's
++          // variance, lowers its own threshold and survives as a speck
++          const float m2 = local_loo
++            ? (local[4 * k + c] * local_n - v * v) / (local_n - 1.0f)
++            : local[4 * k + c];
++          const float sx = sqrtf(MAX(1e-6f, m2 - sb2[c]));
++          const float t = fmaxf(num[c] / sx, kfloor[c]);
++          out[4 * k + c] += MAX(v - t, 0.0f) + MIN(v + t, 0.0f);
++        }
++        out[4 * k + 3] += buf[4 * k + 3];
++      }
++    }
++    else
      synthesize(out, out, buf, thrs, boost, width, height);
  
      float *buf3 = buf2;
-@@ -1584,6 +1726,14 @@ static void process_wavelets(dt_iop_module_t *self,
+@@ -1584,6 +1785,14 @@ static void process_wavelets(dt_iop_module_t *self,
    for(size_t k = 0; k < 4U * npixels; k++)
      out[k] += buf1[k];
  
@@ -242,7 +304,15 @@ index 784d46e509..257cb5a5ab 100644
    if(!d->use_new_vst)
    {
      backtransform(out, width, height, aa, bb);
-@@ -2603,6 +2753,9 @@ int process_cl(dt_iop_module_t *self,
+@@ -1599,6 +1808,7 @@ static void process_wavelets(dt_iop_module_t *self,
+                          p, d->b[1], d->bias - 0.5 * logf(in_scale), wb, toRGB_trans);
+   }
+ 
++  dt_free_align(local);
+   dt_free_align(buf);
+   dt_free_align(tmp);
+   dt_free_align(precond);
+@@ -2603,6 +2813,9 @@ int process_cl(dt_iop_module_t *self,
    }
    else if(d->mode == MODE_WAVELETS || d->mode == MODE_WAVELETS_AUTO)
    {
@@ -252,7 +322,7 @@ index 784d46e509..257cb5a5ab 100644
      return process_wavelets_cl(self, piece, dev_in, dev_out, roi_in, roi_out);
    }
    else
-@@ -3006,6 +3159,7 @@ void commit_params(dt_iop_module_t *self,
+@@ -3006,6 +3219,7 @@ void commit_params(dt_iop_module_t *self,
    d->wb_adaptive_anscombe = p->wb_adaptive_anscombe;
    d->fix_anscombe_and_nlmeans_norm = p->fix_anscombe_and_nlmeans_norm;
    d->use_new_vst = p->use_new_vst;

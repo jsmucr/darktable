@@ -1,5 +1,5 @@
 #!/bin/bash
-# re-run the session 6 measurements on the ISO 20000 sample
+# re-run the session 6 and 7 measurements on the ISO 20000 sample
 #
 #   ./bandnoise.sh [raw] [workdir]
 #
@@ -9,7 +9,7 @@
 # the output is unchanged with the switches off, renders the strength sweeps
 # and the variants of the measured-noise mode, prints tradeoff.py for all of
 # them and the per-scale noise on the flat wall, and reverts the patch on
-# exit. Takes about 10 minutes and leaves about 2.6 GB of renders.
+# exit. Takes about 20 minutes and leaves about 3.3 GB of renders.
 set -e
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -75,6 +75,21 @@ done
 python3 "$here/tradeoff.py" "$work"/sw_old_*.png "$work"/sw_bn_*.png \
   "$work"/once_*.png "$work"/floor_*.png "$work"/fixed_*.png \
   "$work"/mfloor_*.png "$work"/model_*.png "${raw%.*}.JPG"
+
+# session 7: local BayesShrink, without and with leave-one-out
+for r in 2 4; do
+  for s in 1.0 1.1 1.15 1.25; do
+    DT_DN_BANDNOISE=1 DT_DN_BNONCE=1 DT_DN_BNLOCAL=$r DT_DN_BNLOO=1 \
+      png16 "$work/sw_bn_s$s.xmp" "$work/loo_r${r}_s$s.png"
+  done
+done
+for s in 1.0 1.25; do
+  DT_DN_BANDNOISE=1 DT_DN_BNONCE=1 DT_DN_BNLOCAL=4 \
+    png16 "$work/sw_bn_s$s.xmp" "$work/local_r4_s$s.png"
+done
+python3 "$here/tradeoff.py" "$work"/sw_old_s3.0.png \
+  "$work"/floor_s1.25_k1.0.png "$work"/local_*.png "$work"/loo_*.png \
+  "${raw%.*}.JPG"
 
 # per-scale estimates (whole frame) and the noise actually on the wall
 mkdir -p "$work/dump"

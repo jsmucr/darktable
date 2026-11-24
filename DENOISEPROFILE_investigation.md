@@ -62,6 +62,11 @@ in-camera noise reduction at its default (0).
   the old mode, about half the gap to the JPEG, but plain BayesShrink then
   leaves coarse luma mottle; flooring the threshold at 1-1.5 sigma keeps
   most of the gain with mottle at or below the JPEG's.
+- **Estimating BayesShrink's signal level locally instead of per band
+  removes the mottle and keeps more detail** (session 7): at the JPEG's
+  wall noise, bird detail is 0.20 against 0.15 for the old mode and 0.18
+  for the JPEG, with the old mode's low mottle. What is left on flat areas
+  and in texture is **specks**, which are now the main thing to fix.
 
 ## Samples
 
@@ -112,18 +117,19 @@ plus ImageMagick and the built `darktable-cli`:
   balance, and restores the source on exit.
 - `perchannel.patch`: the session 5 experiment, switched on with
   `DT_DN_PERCHANNEL=1`; bit-identical output when off.
-- `bandnoise.sh` re-runs session 6 in about 10 minutes: it renders four
+- `bandnoise.sh` re-runs sessions 6 and 7 in about 20 minutes: it renders four
   references with the clean module, applies `bandnoise.patch`, checks they
   are unchanged with the switches off, renders the strength sweeps and
   variants at 16 bit, prints `tradeoff.py` for all of them, the per-scale
   estimates and thresholds, and the wall's own band noise, and restores the
-  source on exit. Leaves about 2.6 GB of renders in its work directory.
-- `bandnoise.patch`: the session 6 experiment (`DT_DN_BANDNOISE=1` and the
-  variant switches listed there); bit-identical output when off. It
+  source on exit. Leaves about 3.3 GB of renders in its work directory.
+- `bandnoise.patch`: the session 6 and 7 experiments (`DT_DN_BANDNOISE=1`
+  and the variant switches listed there); bit-identical output when off. It
   carries its own copy of the detail-band dump, so do not stack
   `instrumentation.patch` on it.
-- `tradeoff.py` prints wall noise, bird detail, wall chroma and wall
-  mottle for 16-bit renders of P1378616 (definitions in its header).
+- `tradeoff.py` prints wall noise, bird detail, wall chroma, wall mottle
+  and speck counts on the wall and grass for 16-bit renders of P1378616
+  (definitions in its header).
 - `profiling_xmp.py` writes `tools/noise/profiling-shot.xmp` variants with an
   explicit demosaic entry: PPG, RCD, and passthrough monochrome (`cfa.xmp`,
   one raw photosite value per pixel). The stock XMP has no demosaic entry,
@@ -498,6 +504,72 @@ feather contrast, which also has in-camera sharpening.
 Caveats: one file, one wall, one bird crop; linear interpolation between
 sweep points; the bird metric counts leftover noise as detail; all CPU.
 
+## Session 7: local thresholds remove the mottle, specks are what is left
+
+Added to `bandnoise.patch`, on top of the measured band noise:
+
+- `DT_DN_BNLOCAL=r`: BayesShrink with sigma_x estimated per coefficient,
+  from a box mean of the band's squared coefficients (`dt_box_mean`) with
+  radius r << scale (capped at a quarter of the image side), instead of
+  the whole band. The numerator is the whole-band rule's, so only sigma_x
+  changes. Synthesis is done in place of `eaw_synthesize` with the same
+  soft threshold.
+- `DT_DN_BNLOO=1`: leave the coefficient itself out of its window's mean.
+  Without it, a large outlier raises its own window's variance, which
+  lowers its own threshold.
+- `DT_DN_BNLKMIN=k`: per-coefficient threshold at least k times the
+  band's noise sigma.
+
+All with `DT_DN_BNONCE=1`. Switched off, output is still bit-identical to
+the unpatched module (same four variants, PFM `cmp`), and session 6's
+floor render is unchanged to the pixel.
+
+`tradeoff.py` gains two columns: specks, the number of wall pixels more
+than 10% of the mean off their 5x5 median, and the same on the grass crop.
+The grass count includes texture: the JPEG has 1954 there and 30 on the
+wall.
+
+| render | wall noise | bird detail | wall chroma | wall mottle | specks | grass specks |
+|---|---|---|---|---|---|---|
+| old 3.0 | 0.0085 | 0.142 | 0.105 | 0.0020 | 169 | 204 |
+| session 6, floor 1 sigma, 1.25 | 0.0154 | 0.168 | 0.119 | 0.0090 | 58 | 292 |
+| local r4, 1.25 | 0.0068 | 0.193 | 0.103 | 0.0009 | 87 | 809 |
+| local r4 LOO, 1.1 | 0.0165 | 0.200 | 0.126 | 0.0020 | 610 | 2542 |
+| local r4 LOO, 1.15 | 0.0105 | 0.197 | 0.102 | 0.0013 | 263 | 1607 |
+| local r4 LOO, 1.25 | 0.0034 | 0.192 | 0.085 | 0.0005 | 22 | 611 |
+| local r2 LOO, 1.15 | 0.0219 | 0.197 | 0.169 | 0.0033 | 1001 | 2516 |
+| camera JPEG | 0.0187 | 0.179 | (other colors) | 0.0100 | 30 | 1954 |
+
+At the JPEG's wall noise, interpolated as in session 6: bird detail 0.201
+for r4 LOO and 0.195 for r2 LOO, against 0.170 for the session 6 floor,
+0.152 for the old mode and 0.179 for the JPEG. Mottle is 0.0023-0.0028,
+down from 0.0093 and back at the old mode's 0.0030. Chroma is unchanged at
+0.14-0.15.
+
+The detail figure is inflated by specks, so it was repeated after a 3x3
+median (speck-robust): bird 0.189 for r4 LOO at 1.1 (wall noise 0.0165),
+0.163 for the session 6 floor, 0.171 for the JPEG and 0.139 for old 3.0.
+The same median on the wall gives 0.0014 for r4 LOO at 1.1 against 0.0132
+for the JPEG. Most of the wall noise the local mode leaves is specks: the
+grain and mottle are gone.
+
+Specks are now the limit. On the wall, r4 LOO needs strength 1.25 to get
+them to the JPEG's level (22 against 30), and on the grass every local
+variant has more than old 3.0, since texture lowers the local threshold
+and the session 4 dark outliers pass with it. Visually (2x crops of the
+feathers and grass, not kept), the local renders have the most feather
+and grass texture of all darktable renders here, with scattered dark and
+bright single-pixel specks in the grass; old 3.0 has few specks and no
+texture. Leave-one-out lowers the specks at every setting (r4 at 1.25:
+87 to 22 on the wall, 809 to 611 on the grass) and costs under 1% of
+bird detail at the same strength. A
+1 sigma floor (`BNLKMIN=1`) leaves the specks unchanged and costs 6% of
+bird detail. r8 behaves like r4, with a steeper strength response.
+
+Caveats as in session 6. The speck count is a 5x5-median test, which also
+counts fine texture and is only comparable between renders of the same
+crop.
+
 ## Round 1 TODOs
 
 1. **Done (session 4): what produces the dark specks.** The concave
@@ -525,14 +597,15 @@ sweep points; the bird metric counts leftover noise as detail; all CPU.
 ## Round 2 candidates
 
 1. **Y0U0V0 noise normalization.** Luma 5x, chroma 0.25x the model
-   (session 5). **Tried in session 6** by measuring the noise per band;
-   normalization works, detail gain is modest. Open before it could become
-   a real mode: the threshold rule (BayesShrink with a 1-1.5 sigma floor
-   is the best seen; a local, per-block sigma_x instead of the whole band
-   would be the next thing to try against the mottle), strength entering
-   once, the OpenCL path, other files and ISOs, and a params version with
-   the old behavior kept for old histories.
-2. **The specks** (session 4 has the fix directions).
+   (session 5). **Tried in sessions 6 and 7** by measuring the noise per
+   band; normalization works, and local BayesShrink with leave-one-out
+   (r = 4) gives the best detail and mottle seen. Open before it could
+   become a real mode: the specks (next item), strength entering once,
+   the OpenCL path (the local variance needs a box filter there too),
+   other files and ISOs, and a params version with the old behavior kept
+   for old histories.
+2. **The specks** (session 4 has the fix directions). Now the limit of
+   the local mode (session 7), so the next thing to try, on top of it.
 3. **Profiling convention.** Profiles are measured without white balance
    (`tools/noise/profiling-shot.xmp`) and with the finest Haar diagonal
    coefficient (session 3); both differ from what the module sees.
