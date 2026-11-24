@@ -4,7 +4,7 @@
 #   ./specks.sh [raw] [workdir]
 #
 # applies instrumentation.patch to src/iop/denoiseprofile.c, rebuilds that
-# module in ../build-dn (BUILD=... to override), renders the strength-2
+# module in ../build (BUILD=... to override), renders the strength-2
 # wavelet variants with their internal buffers dumped for the wall crop,
 # then reverts the patch and rebuilds the module clean
 set -e
@@ -13,7 +13,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 src=$(dirname "$here")
 raw=${1:-/c/temp/denoise/P1378616.RW2}
 work=${2:-/tmp/dn-specks}
-build=${BUILD:-$src/build-dn}
+build=${BUILD:-$src/build}
 pics=$HOME/Pictures/Darktable/20260430_no_name
 template=${TEMPLATE:-$pics/20260430_0012.RW2.xmp}
 crop="1900 500 360 260"

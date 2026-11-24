@@ -3,7 +3,7 @@
 #
 #   ./reproduce.sh [raw] [workdir]
 #
-# needs a built tree, ../build-dn by default (BUILD=... to override); writes
+# needs a built tree, ../build by default (BUILD=... to override); writes
 # about 750 MB of PFMs into workdir and removes them at the end
 set -e
 
@@ -11,7 +11,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 src=$(dirname "$here")
 raw=${1:-/c/temp/denoise/P1378616.RW2}
 work=${2:-/tmp/dn-investigation}
-build=${BUILD:-$src/build-dn}
+build=${BUILD:-$src/build}
 cli="$build/bin/darktable-cli"
 mkdir -p "$work"
 

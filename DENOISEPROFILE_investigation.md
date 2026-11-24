@@ -104,11 +104,9 @@ plus ImageMagick and the built `darktable-cli`:
   `darktable-cli <raw> <xmp> <out> --apply-custom-presets false --core
   --configdir <tmp> --library :memory:`.
 
-Builds: `build-dn/` is a separate tree configured from this branch
-(`cmake -S . -B build-dn -DCMAKE_BUILD_TYPE=RelWithDebInfo`). Do not
-rebuild single modules of the user's `build/` from this branch: it is
-built from `rw2-tca-pr`, whose `src/common/image.h` differs, so a module
-built here would not match its `dt_image_t`.
+Builds: the scripts use `build/`, rebuilt from this branch in session 4.
+Rebuild it in full after switching branches; a single module built against
+another branch's headers need not match the rest of the tree.
 
 Caveat for every render comparison so far: the template history is the
 scene-referred default of 20260430_0012, so white balance and color
