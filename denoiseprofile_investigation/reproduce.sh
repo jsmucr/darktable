@@ -3,15 +3,16 @@
 #
 #   ./reproduce.sh [raw] [workdir]
 #
-# needs a built tree in ../build; writes about 750 MB of PFMs into workdir
-# and removes them at the end
+# needs a built tree, ../build-dn by default (BUILD=... to override); writes
+# about 750 MB of PFMs into workdir and removes them at the end
 set -e
 
 here=$(cd "$(dirname "$0")" && pwd)
 src=$(dirname "$here")
 raw=${1:-/c/temp/denoise/P1378616.RW2}
 work=${2:-/tmp/dn-investigation}
-cli="$src/build/bin/darktable-cli"
+build=${BUILD:-$src/build-dn}
+cli="$build/bin/darktable-cli"
 mkdir -p "$work"
 
 # interpolated DC-G9 ISO 20000 profile (data/noiseprofiles.json,
@@ -29,7 +30,7 @@ render() {
 }
 
 gcc -O2 -o "$work/noiseprofile" "$src/tools/noise/noiseprofile.c" \
-  -I"$src/build/src" $(pkg-config --cflags glib-2.0 gmodule-2.0) -lm
+  -I"$build/src" $(pkg-config --cflags glib-2.0 gmodule-2.0) -lm
 
 python3 "$here/profiling_xmp.py" "$src" "$work"
 for t in ppg rcd cfa; do

@@ -1,0 +1,100 @@
+diff --git a/src/iop/denoiseprofile.c b/src/iop/denoiseprofile.c
+index 784d46e509..6f98f37ab0 100644
+--- a/src/iop/denoiseprofile.c
++++ b/src/iop/denoiseprofile.c
+@@ -24,6 +24,7 @@
+ #include "common/nlmeans_core.h"
+ #include "common/noiseprofiles.h"
+ #include "common/opencl.h"
++#include "common/pfm.h"
+ #include "control/control.h"
+ #include "develop/blend.h"
+ #include "develop/imageop.h"
+@@ -236,6 +237,37 @@ static void debug_dump_PFM(const dt_dev_pixelpipe_iop_t *const piece,
+   dt_dump_pfm(name, buf, width, height,  4 * sizeof(float), "denoiseprofile");
+ }
+ 
++// INVESTIGATION ONLY: DT_DN_DUMP=<dir> DT_DN_CROP="x y w h" dumps a crop of
++// a 4-channel float buffer as PFM from the export pipe
++static void _inv_dump(const dt_dev_pixelpipe_iop_t *const piece,
++                      const dt_iop_roi_t *const roi,
++                      const char *const name,
++                      const float *const buf)
++{
++  const char *dir = g_getenv("DT_DN_DUMP");
++  const char *crop = g_getenv("DT_DN_CROP");
++  if(!dir || !crop || !dt_pipe_is_export(piece->pipe)) return;
++  int x0, y0, w, h;
++  if(sscanf(crop, "%d %d %d %d", &x0, &y0, &w, &h) != 4) return;
++  x0 -= roi->x;
++  y0 -= roi->y;
++  if(x0 < 0 || y0 < 0 || x0 + w > roi->width || y0 + h > roi->height)
++  {
++    fprintf(stderr, "[inv] %s: crop outside roi %d %d %dx%d\n", name,
++            roi->x, roi->y, roi->width, roi->height);
++    return;
++  }
++  float *tmp = dt_alloc_align_float((size_t)4 * w * h);
++  for(int j = 0; j < h; j++)
++    memcpy(tmp + (size_t)4 * w * j,
++           buf + (size_t)4 * ((size_t)(y0 + j) * roi->width + x0),
++           sizeof(float) * 4 * w);
++  char *fn = g_strdup_printf("%s/%s.pfm", dir, name);
++  dt_write_pfm(fn, w, h, tmp, 4 * sizeof(float));
++  g_free(fn);
++  dt_free_align(tmp);
++}
++
+ /* old legacy_params routine used up to v11
+    this is now called into the legacy_params supporting incremental
+    updates. It was too risky to rewrite the old legacy params support
+@@ -1551,6 +1583,14 @@ static void process_wavelets(dt_iop_module_t *self,
+   }
+ 
+   debug_dump_PFM(piece, "transformed", precond, width, height, 0);
++  _inv_dump(piece, roi_in, "input", in);
++  _inv_dump(piece, roi_in, "transformed", precond);
++  if(g_getenv("DT_DN_DUMP") && dt_pipe_is_export(piece->pipe))
++    fprintf(stderr, "[inv] roi %d %d %dx%d in_scale %g max_scale %d"
++            " p %g %g %g wb %g %g %g a %g b %g compensate_p %g bias %g\n",
++            roi_in->x, roi_in->y, roi_in->width, roi_in->height, in_scale,
++            max_scale, p[0], p[1], p[2], wb[0], wb[1], wb[2],
++            d->a[1], d->b[1], compensate_p, d->bias);
+ 
+   float *restrict buf1 = precond;
+   float *restrict buf2 = tmp;
+@@ -1572,6 +1612,16 @@ static void process_wavelets(dt_iop_module_t *self,
+     const dt_aligned_pixel_t boost = { 1.0f, 1.0f, 1.0f, 1.0f };
+     dt_aligned_pixel_t thrs;
+     variance_stabilizing_xform(thrs, scale, max_scale, npixels, sum_y2, d);
++    if(g_getenv("DT_DN_DUMP") && dt_pipe_is_export(piece->pipe))
++    {
++      char name[32];
++      snprintf(name, sizeof(name), "detail_%d", scale);
++      _inv_dump(piece, roi_in, name, buf);
++      fprintf(stderr, "[inv] scale %d sigma_band %g var_y %g %g %g"
++              " thrs %g %g %g\n", scale, sigma_band,
++              sum_y2[0] / (npixels - 1.0f), sum_y2[1] / (npixels - 1.0f),
++              sum_y2[2] / (npixels - 1.0f), thrs[0], thrs[1], thrs[2]);
++    }
+     synthesize(out, out, buf, thrs, boost, width, height);
+ 
+     float *buf3 = buf2;
+@@ -1584,6 +1634,9 @@ static void process_wavelets(dt_iop_module_t *self,
+   for(size_t k = 0; k < 4U * npixels; k++)
+     out[k] += buf1[k];
+ 
++  _inv_dump(piece, roi_in, "residue", buf1);
++  _inv_dump(piece, roi_in, "synth", out);
++
+   if(!d->use_new_vst)
+   {
+     backtransform(out, width, height, aa, bb);
+@@ -1598,6 +1651,7 @@ static void process_wavelets(dt_iop_module_t *self,
+     backtransform_Y0U0V0(out, width, height, d->a[1] * compensate_p,
+                          p, d->b[1], d->bias - 0.5 * logf(in_scale), wb, toRGB_trans);
+   }
++  _inv_dump(piece, roi_in, "output", out);
+ 
+   dt_free_align(buf);
+   dt_free_align(tmp);

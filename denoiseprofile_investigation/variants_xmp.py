@@ -17,16 +17,17 @@ BLEND = 'gz11eJxjYIAACQYYOOHEgAZY0QWAgBGLGANDgz0Ej1Q+dcF/IADRAGpyHQU='
 
 
 def denoiseprofile(mode=1, strength=1.0, luma=0.5, chroma=0.5, gain=1.0,
-                   color=1):
+                   color=1, shadows=None):
     # dt_iop_denoiseprofile_params_t, version 12: 416 bytes
     # mode: 0 nlmeans, 1 wavelets, 3 nlmeans auto, 4 wavelets auto
     # color: 0 RGB, 1 Y0U0V0; luma/chroma are flat curve heights (0.5 = off)
     # the infer_* values repeat src/iop/denoiseprofile.c:2637-2655, as
-    # reload_defaults() would set them
+    # reload_defaults() would set them; shadows overrides the inferred value
     ag = a * gain
     radius = float(min(int(1 + ag * 15000 + ag * ag * 300000), 8))
     scattering = min(3000 * ag, 1.0)
-    shadows = min(max(0.1 - 0.1 * math.log(ag), 0.7), 1.8)
+    if shadows is None:
+        shadows = min(max(0.1 - 0.1 * math.log(ag), 0.7), 1.8)
     bias = -max(5 + 0.5 * math.log(ag), 0.0)
     f = [radius, 7.0, strength, shadows, bias, scattering, 0.1, gain,
          -1.0, 0, 0, 0, 0, 0]  # a[0] = -1: autodetect the profile
@@ -53,6 +54,18 @@ VARIANTS = {
     'wav_default': [('denoiseprofile', 12, denoiseprofile())],
     'wav_strong': [('denoiseprofile', 12,
                     denoiseprofile(strength=2.0, chroma=0.8, luma=0.6))],
+    'wav_strong_rgb': [('denoiseprofile', 12,
+                        denoiseprofile(strength=2.0, chroma=0.8, luma=0.6,
+                                       color=0))],
+    'wav_strong_sh0': [('denoiseprofile', 12,
+                        denoiseprofile(strength=2.0, chroma=0.8, luma=0.6,
+                                       shadows=0.0))],
+    'wav_strong_sh05': [('denoiseprofile', 12,
+                         denoiseprofile(strength=2.0, chroma=0.8, luma=0.6,
+                                        shadows=0.5))],
+    'wav_strong_sh18': [('denoiseprofile', 12,
+                         denoiseprofile(strength=2.0, chroma=0.8, luma=0.6,
+                                        shadows=1.8))],
     'wav_fine': [('denoiseprofile', 12,
                   denoiseprofile(strength=1.5, luma=0.7, chroma=0.8))],
     'nlm_auto': [('denoiseprofile', 12, denoiseprofile(mode=3))],

@@ -29,8 +29,18 @@ in-camera noise reduction at its default (0).
 - **A uniform level correction is what the strength slider already does.**
   Strength around 2 removes the grain but softens fine detail and leaves
   **isolated dark single-pixel specks** in wavelet mode. The specks, not the
-  noise estimate, are what keeps darktable behind the JPEG here. Their cause
-  is unknown (session 2).
+  noise estimate, are what keeps darktable behind the JPEG here (session 2).
+- **The specks are the dark tail of the noise, made heavier by the
+  variance-stabilizing transform and passed through by soft thresholding**
+  (session 4). At this signal level the concave transform turns the input's
+  bright-skewed noise into dark-skewed noise; 4-5 sigma dark outliers lose
+  only the threshold (about 1.5 sigma) and come out as specks. The speck
+  count follows the transform's exponent ("preserve shadows"): 30, 76, 201
+  and 1297 at shadows 0, 0.5, 0.94 (inferred default) and 1.8. Photosites
+  clipped to exactly 0 before the module add to it (26% of specks).
+- **Workaround in the GUI:** lower "preserve shadows" to about 0.5 when
+  raising strength in wavelet mode. Fewer specks, no visible detail loss
+  on this file (session 4).
 - **Best result so far:** raw denoise at threshold 0.02 followed by
   non-local means auto. No specks, clean flat areas, but feathers softer
   than in the JPEG (session 2).
@@ -63,6 +73,19 @@ plus ImageMagick and the built `darktable-cli`:
 
 - `reproduce.sh` re-runs every measurement of sessions 2 and 3 in about 20 s
   and prints the numbers quoted below.
+- `specks.sh` re-runs session 4 in about 45 s: it applies
+  `instrumentation.patch` to `src/iop/denoiseprofile.c`, rebuilds the
+  module, renders with the module's buffers dumped, runs `specks.py` and
+  `tails.py`, and reverts the patch on exit.
+- `instrumentation.patch`: with `DT_DN_DUMP=<dir>` and
+  `DT_DN_CROP="x y w h"` set, the wavelet path of the export pipe writes a
+  crop of its input, the transformed image, every detail band, the residue,
+  the synthesis before the backtransform and its output as float PFMs, and
+  prints the transform parameters and per-scale thresholds to stderr.
+- `specks.py` finds specks in a dumped output and traces each back through
+  input, transform and the finest detail band. `tails.py` measures the
+  asymmetry of the noise tails before and after the transform (its labels
+  say Y0/U0/V0; in RGB mode the channels are R, G, B).
 - `profiling_xmp.py` writes `tools/noise/profiling-shot.xmp` variants with an
   explicit demosaic entry: PPG, RCD, and passthrough monochrome (`cfa.xmp`,
   one raw photosite value per pixel). The stock XMP has no demosaic entry,
@@ -80,6 +103,12 @@ plus ImageMagick and the built `darktable-cli`:
   the script). Render with
   `darktable-cli <raw> <xmp> <out> --apply-custom-presets false --core
   --configdir <tmp> --library :memory:`.
+
+Builds: `build-dn/` is a separate tree configured from this branch
+(`cmake -S . -B build-dn -DCMAKE_BUILD_TYPE=RelWithDebInfo`). Do not
+rebuild single modules of the user's `build/` from this branch: it is
+built from `rw2-tca-pr`, whose `src/common/image.h` differs, so a module
+built here would not match its `dt_image_t`.
 
 Caveat for every render comparison so far: the template history is the
 scene-referred default of 20260430_0012, so white balance and color
@@ -144,11 +173,12 @@ Renders (100% crops, brightness-matched):
 - raw denoise 0.02 + non-local means auto: best so far, clean wall, no
   specks, feathers still softer than the JPEG.
 
-Specks against clipped photosites: on the strength-2 render, pixels darker
-than 0.65-0.85x their 5x5 median have a photosite at or below 0 within 3x3
-in 7-10% of cases, against 3% for random pixels. Some association, but it
-does not explain the specks. Note that `precondition_v2` clamps negative
-input to 0 before the transform (`denoiseprofile.c:1013`).
+Specks against clipped photosites: on the strength-2 render, pixels darker than
+0.65-0.85x their 5x5 median have a photosite at or below 0 within 3x3 in 7-10%
+of cases, against 3% for random pixels. Some association, but it does not
+explain the specks. Note that `precondition_v2` clamps negative input to 0
+before the transform (`denoiseprofile.c:1013`). Session 4 measures the clipping
+at the module input instead and finds a larger share.
 
 Retracted: session 2 also compared block averages after demosaic against
 white noise, found the noise 1.6-2.5x stronger at 2-8 px than white noise,
@@ -198,19 +228,92 @@ A per-scale correction (estimate each band's noise from the data and
 correct the model's shape) was designed and then dropped before any code
 was written, since the shape is already about right.
 
+## Session 4: the specks are the transformed noise's dark tail
+
+Traced with `specks.sh` on the strength-2 render (strength 2, chroma curve
+0.8, luma 0.6, Y0U0V0) in the wall crop `360x260+1900+500`. Transform
+parameters printed by the instrumented module for this image:
+p = [0.855, 0.943, 0.883] (`shadows` 0.943 plus the white-balance term),
+compensate_p 0.844, bias -0.784, a single 5184x3888 ROI (no tiling).
+
+The trace, speck by speck (201 specks: output luminance below 0.65x its
+5x5 median, in 91136 pixels):
+
+- Every speck is already a dark outlier going in: median z = -3.59 in input
+  luminance against the local median.
+- After `precondition_Y0U0V0` (`denoiseprofile.c:1128`) all 201 sit below
+  -3 sigma in Y0, median -4.47.
+- In the finest detail band their Y0 coefficients are -2.5 to -3.7 times
+  the threshold. The threshold is 1.56x the band's robust sigma, and soft
+  thresholding (`accumulate`, `src/common/eaw.c:24`) only subtracts it, so
+  they survive at 1.5-2.7 thresholds and come out as specks.
+
+Why the tail is dark: the transform f(x) = c (x + b)^(1 - p/2) is concave
+(exponent 0.53-0.57 here), which stretches values below the local level and
+compresses those above. At the wall's level the noise going into the module is
+about 40% of the signal in red, far outside the small-noise regime the
+transform's Taylor argument assumes (comment above `precondition_v2`), so the
+stretch is strong. Share of residuals beyond 3 and 4 sigma (Gaussian: 0.13% and
+0.003% each side):
+
+| buffer | < -3 s | > +3 s | < -4 s | > +4 s |
+|---|---|---|---|---|
+| input R | 0.04% | 0.82% | 0.00% | 0.12% |
+| input G | 0.26% | 0.97% | 0.01% | 0.13% |
+| input B | 0.37% | 0.65% | 0.02% | 0.09% |
+| transformed Y0 | 0.75% | 0.36% | 0.07% | 0.03% |
+| transformed U0 | 2.26% | 0.23% | 0.46% | 0.01% |
+| transformed V0 | 1.98% | 0.36% | 0.47% | 0.01% |
+
+The input noise is skewed bright, as photon noise at low counts is; after
+the transform it is skewed dark.
+
+Intervention, same render with only `shadows` changed (the exponent is
+1 - p/2 with p = shadows plus the white-balance term, clamped at 0):
+
+| shadows | specks | Y0 < -4 s | Y0 > +4 s |
+|---|---|---|---|
+| 0 (linear transform) | 30 | 0.00% | 0.11% |
+| 0.5 | 76 | 0.01% | 0.07% |
+| 0.94 (inferred default) | 201 | 0.07% | 0.03% |
+| 1.8 | 1297 | 2.19% | 0.00% |
+
+At shadows 0 the remaining specks are mostly bright ones, from the
+untransformed bright tail. Visually, shadows 0.5 and 0 remove most dark
+specks with no visible loss of feather detail against 0.94.
+
+Clipping adds to it: 26% of the specks have an input channel at exactly 0,
+against 0.8% of random pixels (in the crop, 0.62% of input red pixels are
+exactly 0 and none are negative). The raw data has negatives (session 2); RCD
+clamps its output at 0 (`src/iop/demosaicing/rcd.c:402-404`) and the transform
+clamps `in + b` at 0 again (`denoiseprofile.c:1149`, `:1155`). A clipped
+photosite maps to the lowest value the transform can produce, which is the far
+end of the dark tail.
+
+RGB mode (`wav_strong_rgb`) leaves only 5 specks, but the render is flat
+and patchy with most fine detail gone (bird crop), so it hides the specks
+by overdenoising rather than avoiding them. Its transformed red is just as
+dark-skewed (2.44% below -3 sigma).
+
+Side observation, not yet understood: in Y0U0V0 mode at strength 2 the
+chroma (U0, V0) thresholds run from 20479 at scale 0 to 8.6 at scale 6.
+At every scale the observed chroma detail variance is below the variance
+the model expects (0.034 against 1 at scale 0), so `std_x` hits its 1e-6
+floor (`:1370-1372`) and all chroma detail is discarded; the chroma comes
+from the residue alone.
+Belongs with TODO 2, since it is a noise-level question.
+
 ## Round 1 TODOs
 
-1. **Find what produces the dark single-pixel specks** when wavelet
-   strength is raised. They block the obvious remedy of denoising harder.
-   Known: they appear with RCD, PPG, AMaZE and LMMSE and with raw denoise
-   0.02 in front; they associate only weakly with photosites at or below
-   black level (session 2). Not yet tried: locating individual specks and
-   reading the demosaiced input at those pixels (an outlier going in, or
-   one created by the thresholding or the backtransform?), RGB instead of
-   Y0U0V0 mode, and varying `shadows` and `bias`, which shape the
-   transform and its inverse. `darktable-cli` cannot dump the module's
-   intermediate buffers (see Tools), so looking inside needs a temporary
-   local change. Done when the cause is shown, not just correlated.
+1. **Done (session 4): what produces the dark specks.** The concave
+   variance-stabilizing transform turns the low-signal noise dark-skewed,
+   clipped photosites push the tail further, and soft thresholding at
+   about 1.5 sigma passes the 4-5 sigma outliers. Fix directions for a
+   later round, none tried: treat negative and zero input without the
+   clamps (extend the transform below 0 instead), test isolated outliers
+   against their neighbors before or during thresholding (soft, hard and
+   garrote thresholding all pass large coefficients by design), or choose
+   the exponent by signal level instead of a global `shadows`.
 2. **Use the profile's per-channel a and b** in the wavelet and non-local
    means paths instead of the green entry (`denoiseprofile.c:1532`,
    `:1688`, `:1731`). The transforms take scalar a and b today. Check
