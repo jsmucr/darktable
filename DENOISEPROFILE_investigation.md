@@ -55,6 +55,13 @@ in-camera noise reduction at its default (0).
 - **Best result so far:** raw denoise at threshold 0.02 followed by
   non-local means auto. No specks, clean flat areas, but feathers softer
   than in the JPEG (session 2).
+- **Measuring the noise per band from the data fixes the Y0U0V0
+  normalization** (session 6, experiment behind `DT_DN_BANDNOISE`): the
+  finest band comes out at 1.05 / 0.86 / 0.94 instead of 5.2 / 0.26 / 0.25.
+  At the JPEG's level of fine grain it keeps 9-12% more feather detail than
+  the old mode, about half the gap to the JPEG, but plain BayesShrink then
+  leaves coarse luma mottle; flooring the threshold at 1-1.5 sigma keeps
+  most of the gain with mottle at or below the JPEG's.
 
 ## Samples
 
@@ -105,6 +112,18 @@ plus ImageMagick and the built `darktable-cli`:
   balance, and restores the source on exit.
 - `perchannel.patch`: the session 5 experiment, switched on with
   `DT_DN_PERCHANNEL=1`; bit-identical output when off.
+- `bandnoise.sh` re-runs session 6 in about 10 minutes: it renders four
+  references with the clean module, applies `bandnoise.patch`, checks they
+  are unchanged with the switches off, renders the strength sweeps and
+  variants at 16 bit, prints `tradeoff.py` for all of them, the per-scale
+  estimates and thresholds, and the wall's own band noise, and restores the
+  source on exit. Leaves about 2.6 GB of renders in its work directory.
+- `bandnoise.patch`: the session 6 experiment (`DT_DN_BANDNOISE=1` and the
+  variant switches listed there); bit-identical output when off. It
+  carries its own copy of the detail-band dump, so do not stack
+  `instrumentation.patch` on it.
+- `tradeoff.py` prints wall noise, bird detail, wall chroma and wall
+  mottle for 16-bit renders of P1378616 (definitions in its header).
 - `profiling_xmp.py` writes `tools/noise/profiling-shot.xmp` variants with an
   explicit demosaic entry: PPG, RCD, and passthrough monochrome (`cfa.xmp`,
   one raw photosite value per pixel). The stock XMP has no demosaic entry,
@@ -393,6 +412,92 @@ noise variance at every scale, so the BayesShrink threshold hits its floor
 (8000 at scale 0) and all chroma detail is dropped; chroma comes from the
 coarsest residue alone.
 
+## Session 6: measured band noise normalizes Y0U0V0, detail gain is modest
+
+Experiment (`bandnoise.patch`, `DT_DN_BANDNOISE=1`, wavelets with the new
+transform, CPU only; `process_cl` returns `DT_OPENCL_PROCESS_CL` so the
+pipe falls back to the CPU): instead of the model, the noise of each band
+is measured from the data. `_band_noise` takes the mean square of the band
+in blocks (16 px at scale 0, doubling per scale, shrunk until there are at
+least 64 blocks) and uses the 10th percentile across blocks, so texture
+and edges do not count. The finest band, measured once before the loop,
+sets a per-channel gain that brings Y0, U0 and V0 to unit noise; the gain
+is multiplied back out after the residue is added. At each scale the
+BayesShrink threshold then uses the measured sigma times strength, with
+the extra factor 8 (`adjt`) dropped. Switched off, output is bit-identical
+to the unpatched module (PFM `cmp`) for wavelets Y0U0V0, wavelets RGB,
+strength 2 and non-local means auto. Variants, all behind more switches:
+
+- `DT_DN_BNONCE=1`: strength in the thresholds only. Without it strength
+  also enters the gain, so the threshold goes with strength squared.
+- `DT_DN_BNKMIN=k`: threshold at least k times the measured band sigma.
+- `DT_DN_BNK=k`: threshold exactly k times the measured band sigma.
+- `DT_DN_BNFLOOR=1` / `DT_DN_BNGAIN=1`: band sigma at least / exactly the
+  model's `varf^scale`, i.e. measured gain with model-shaped thresholds.
+- `DT_DN_BANDNOISE_LOG=1`, `DT_DN_THRLOG=1`: estimates and thresholds.
+
+Normalization works. Noise of the module's own detail bands on the wall
+(`detail_noise.py`, strength 1.25 once; model expects 1.0 at scale 0):
+
+| scale | Y0 | U0 | V0 | model |
+|---|---|---|---|---|
+| 0 | 1.05 | 0.86 | 0.94 | 1.00 |
+| 1 | 0.41 | 0.78 | 0.83 | 0.52 |
+| 2 | 0.18 | 0.49 | 0.53 | 0.27 |
+| 3 | 0.10 | 0.26 | 0.30 | 0.14 |
+
+against 5.21 / 0.26 / 0.25 at scale 0 in session 5. The whole-frame
+estimates are within 14% of the wall's values at scale 0 and 4-11% below
+them at scales 1-3. Luma falls off faster than the model and chroma
+slower, which is the demosaic correlation of session 5 again.
+
+Metrics (`tradeoff.py`, 16-bit renders, chroma 0.8 for the old mode and
+1.0 for the measured mode, shadows 0.5 for both): wall noise is the luma
+high-pass (sigma 6) RMS over mean on the wall, bird detail the same on the
+feathers, wall mottle the 2-16 px luma band on the wall, wall chroma the
+spread of Lab a, b. Interpolated linearly to the JPEG's wall noise
+(0.0187) along each strength sweep:
+
+| mode | bird detail | wall mottle | wall chroma |
+|---|---|---|---|
+| old (strength 2-3) | 0.152 | 0.0030 | 0.148 |
+| measured, once (1.25-1.5) | 0.169 | 0.0141 | 0.139 |
+| measured, floor 1 sigma (1.0-1.25) | 0.170 | 0.0093 | 0.133 |
+| measured, floor 1.5 sigma (1.0-1.25) | 0.165 | 0.0057 | 0.133 |
+| measured, fixed k (2.5-3) | 0.145 | 0.0030 | 0.605 |
+| camera JPEG | 0.179 | 0.0100 | (other colors) |
+
+So at equal fine-grain noise the measured mode keeps 9-12% more feather
+high-pass than the old one, about half the gap to the JPEG, with similar
+chroma noise. It pays in mottle: plain BayesShrink leaves 5x the old mode's
+2-16 px luma blotches, clearly visible on the wall. A floor of 1-1.5 sigma
+on the threshold brings that to 2-3x, at or below the JPEG's, for most of
+the detail gain. A fixed k-sigma threshold loses on every count.
+
+Why the mottle (`DT_DN_THRLOG`, strength 1.25 once): BayesShrink's
+threshold sigma_n^2 / sigma_x uses the variance of the whole band, so at
+scales 2-4, where image structure dominates the band variance, the luma
+threshold falls to 0.34-0.5 of the band's noise sigma and the coarse grain
+passes. At scale 0 luma, and chroma at scales 0-3, the band variance is
+below the noise estimate, sigma_x hits its 1e-3 floor and the band is
+removed outright; chroma scale 4 gets about 19 sigma. The old mode at
+strength 3 has luma thresholds of 2.7-4.9 sigma at scales 0-3 (against
+its own dumped band noise), hence no mottle and the softer feathers.
+
+The model-shaped variants are not usable: wall noise drops from 0.043 to
+0.002 between strength 1.0 and 1.25 (mfloor), and model-only leaves 0.95
+chroma at 1.0. Not investigated further.
+
+Visual check (`floor2.png` montage, not kept: wall and bird crops of the
+JPEG, old 3.0, measured 1.25 once, and floor 1 and 1.5 sigma, renders
+lifted x2.7 for viewing): the measured renders keep visibly more texture
+in the rock and feathers than old 3.0; plain measured shows wall blotches,
+floor 1.5 sigma is nearly as clean as old 3.0. None matches the JPEG's
+feather contrast, which also has in-camera sharpening.
+
+Caveats: one file, one wall, one bird crop; linear interpolation between
+sweep points; the bird metric counts leftover noise as detail; all CPU.
+
 ## Round 1 TODOs
 
 1. **Done (session 4): what produces the dark specks.** The concave
@@ -420,10 +525,13 @@ coarsest residue alone.
 ## Round 2 candidates
 
 1. **Y0U0V0 noise normalization.** Luma 5x, chroma 0.25x the model
-   (session 5). Either account for the cross-channel correlation and fix the
-   Y0 row scale, or estimate the luma and chroma noise per band from the
-   data. Changes every default-mode edit, so it would need a params version
-   with the old behavior kept for old histories.
+   (session 5). **Tried in session 6** by measuring the noise per band;
+   normalization works, detail gain is modest. Open before it could become
+   a real mode: the threshold rule (BayesShrink with a 1-1.5 sigma floor
+   is the best seen; a local, per-block sigma_x instead of the whole band
+   would be the next thing to try against the mottle), strength entering
+   once, the OpenCL path, other files and ISOs, and a params version with
+   the old behavior kept for old histories.
 2. **The specks** (session 4 has the fix directions).
 3. **Profiling convention.** Profiles are measured without white balance
    (`tools/noise/profiling-shot.xmp`) and with the finest Haar diagonal

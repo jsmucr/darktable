@@ -78,7 +78,24 @@ VARIANTS = {
                   ('denoiseprofile', 12, denoiseprofile())],
     'raw02_nlm': [('rawdenoise', 2, rawdenoise(0.02)),
                   ('denoiseprofile', 12, denoiseprofile(mode=3))],
+    # round 2: settings tried with the measured-noise experiment
+    'bn_c1': [('denoiseprofile', 12, denoiseprofile(chroma=1.0))],
+    'bn_c1_sh05': [('denoiseprofile', 12,
+                    denoiseprofile(chroma=1.0, shadows=0.5))],
+    'bn_s15_c1_sh05': [('denoiseprofile', 12,
+                        denoiseprofile(strength=1.5, chroma=1.0,
+                                       shadows=0.5))],
+    'bn_s15_l06_c1_sh05': [('denoiseprofile', 12,
+                            denoiseprofile(strength=1.5, luma=0.6,
+                                           chroma=1.0, shadows=0.5))],
 }
+# round 2 strength sweeps: old mode, and measured-noise mode at chroma 1
+for s in (1.0, 1.5, 2.0, 3.0, 4.0):
+    VARIANTS[f'sw_old_s{s}'] = [('denoiseprofile', 12, denoiseprofile(
+        strength=s, chroma=0.8, shadows=0.5))]
+for s in (0.75, 1.0, 1.25, 1.5, 2.0):
+    VARIANTS[f'sw_bn_s{s}'] = [('denoiseprofile', 12, denoiseprofile(
+        strength=s, chroma=1.0, shadows=0.5))]
 
 x = open(template).read()
 end = '    </rdf:Seq>\n   </darktable:history>'

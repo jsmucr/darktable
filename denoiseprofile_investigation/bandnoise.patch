@@ -1,0 +1,262 @@
+diff --git a/src/iop/denoiseprofile.c b/src/iop/denoiseprofile.c
+index 784d46e509..257cb5a5ab 100644
+--- a/src/iop/denoiseprofile.c
++++ b/src/iop/denoiseprofile.c
+@@ -24,6 +24,7 @@
+ #include "common/nlmeans_core.h"
+ #include "common/noiseprofiles.h"
+ #include "common/opencl.h"
++#include "common/pfm.h"
+ #include "control/control.h"
+ #include "develop/blend.h"
+ #include "develop/imageop.h"
+@@ -192,6 +193,7 @@ typedef struct dt_iop_denoiseprofile_data_t
+   gboolean fix_anscombe_and_nlmeans_norm; // backward compatibility options
+   gboolean use_new_vst;                   // backward compatibility options
+   dt_iop_denoiseprofile_wavelet_mode_t wavelet_color_mode; // switch between RGB and Y0U0V0 modes.
++  gboolean band_noise;                    // wavelets: measure the noise per band and channel
+ } dt_iop_denoiseprofile_data_t;
+ 
+ typedef struct dt_iop_denoiseprofile_global_data_t
+@@ -236,6 +238,37 @@ static void debug_dump_PFM(const dt_dev_pixelpipe_iop_t *const piece,
+   dt_dump_pfm(name, buf, width, height,  4 * sizeof(float), "denoiseprofile");
+ }
+ 
++// INVESTIGATION ONLY: DT_DN_DUMP=<dir> DT_DN_CROP="x y w h" dumps a crop of
++// a 4-channel float buffer as PFM from the export pipe
++static void _inv_dump(const dt_dev_pixelpipe_iop_t *const piece,
++                      const dt_iop_roi_t *const roi,
++                      const char *const name,
++                      const float *const buf)
++{
++  const char *dir = g_getenv("DT_DN_DUMP");
++  const char *crop = g_getenv("DT_DN_CROP");
++  if(!dir || !crop || !dt_pipe_is_export(piece->pipe)) return;
++  int x0, y0, w, h;
++  if(sscanf(crop, "%d %d %d %d", &x0, &y0, &w, &h) != 4) return;
++  x0 -= roi->x;
++  y0 -= roi->y;
++  if(x0 < 0 || y0 < 0 || x0 + w > roi->width || y0 + h > roi->height)
++  {
++    fprintf(stderr, "[inv] %s: crop outside roi %d %d %dx%d\n", name,
++            roi->x, roi->y, roi->width, roi->height);
++    return;
++  }
++  float *tmp = dt_alloc_align_float((size_t)4 * w * h);
++  for(int j = 0; j < h; j++)
++    memcpy(tmp + (size_t)4 * w * j,
++           buf + (size_t)4 * ((size_t)(y0 + j) * roi->width + x0),
++           sizeof(float) * 4 * w);
++  char *fn = g_strdup_printf("%s/%s.pfm", dir, name);
++  dt_write_pfm(fn, w, h, tmp, 4 * sizeof(float));
++  g_free(fn);
++  dt_free_align(tmp);
++}
++
+ /* old legacy_params routine used up to v11
+    this is now called into the legacy_params supporting incremental
+    updates. It was too risky to rewrite the old legacy params support
+@@ -1350,6 +1383,7 @@ static void variance_stabilizing_xform(dt_aligned_pixel_t thrs,
+                                        const int max_scale,
+                                        const size_t npixels,
+                                        const float *const sum_y2,
++                                       const float *const band_sigma,
+                                        const dt_iop_denoiseprofile_data_t *const d)
+ {
+   // variance stabilizing transform maps sigma to unity.
+@@ -1357,8 +1391,12 @@ static void variance_stabilizing_xform(dt_aligned_pixel_t thrs,
+   // it is then transformed by wavelet scales via the 5 tap a-trous filter:
+   const float varf = sqrtf(2.0f + 2.0f * 4.0f * 4.0f + 6.0f * 6.0f) / 16.0f; // about 0.5
+   const float sigma_band = powf(varf, scale) * sigma;
+-  // determine thrs as bayesshrink
+-  const float sb2 = sigma_band * sigma_band;
++  // determine thrs as bayesshrink, with the noise measured in the band
++  // when band_sigma is given
++  dt_aligned_pixel_t sb2;
++  for(int c = 0; c < 3; c++)
++    sb2[c] = band_sigma ? band_sigma[c] * band_sigma[c] : sigma_band * sigma_band;
++  sb2[3] = 0.0f;
+ 
+   const dt_aligned_pixel_t var_y =
+     { sum_y2[0] / (npixels - 1.0f),
+@@ -1367,13 +1405,15 @@ static void variance_stabilizing_xform(dt_aligned_pixel_t thrs,
+       0.0f };
+ 
+   const dt_aligned_pixel_t std_x =
+-    { sqrtf(MAX(1e-6f, var_y[0] - sb2)),
+-      sqrtf(MAX(1e-6f, var_y[1] - sb2)),
+-      sqrtf(MAX(1e-6f, var_y[2] - sb2)),
++    { sqrtf(MAX(1e-6f, var_y[0] - sb2[0])),
++      sqrtf(MAX(1e-6f, var_y[1] - sb2[1])),
++      sqrtf(MAX(1e-6f, var_y[2] - sb2[2])),
+       1.0f };
+ 
+-  // add 8.0 here because it seemed a little weak
+-  dt_aligned_pixel_t adjt = { 8.0f, 8.0f, 8.0f, 0.0f };
++  // add 8.0 here because it seemed a little weak; with measured noise
++  // the threshold is plain bayesshrink
++  const float base = band_sigma ? 1.0f : 8.0f;
++  dt_aligned_pixel_t adjt = { base, base, base, 0.0f };
+ 
+   const int offset_scale = DT_IOP_DENOISE_PROFILE_BANDS - max_scale;
+   const int band_index = DT_IOP_DENOISE_PROFILE_BANDS - (scale + offset_scale + 1);
+@@ -1420,7 +1460,56 @@ static void variance_stabilizing_xform(dt_aligned_pixel_t thrs,
+     adjt[2] *= band_force_exp_2;
+   }
+   for_each_channel(c)
+-    thrs[c] = adjt[c] * sb2 / std_x[c];
++    thrs[c] = adjt[c] * sb2[c] / std_x[c];
++}
++
++static int _cmp_float(const void *a, const void *b)
++{
++  const float x = *(const float *)a, y = *(const float *)b;
++  return (x > y) - (x < y);
++}
++
++// noise sigma per channel of a zero-mean detail band, from its flattest
++// parts: mean square per block, 10th percentile across blocks, so that
++// texture and edges do not count. Blocks grow with the scale, which keeps
++// the number of independent coefficients per block about constant. Leaves
++// sigma at 0 when the band is too small to measure.
++static void _band_noise(const float *const restrict detail,
++                        const int width,
++                        const int height,
++                        const int scale,
++                        dt_aligned_pixel_t sigma)
++{
++  for_each_channel(c) sigma[c] = 0.0f;
++  int bs = 16 << scale;
++  while(bs > 8 && (size_t)(width / bs) * (height / bs) < 64) bs /= 2;
++  const int bw = width / bs, bh = height / bs;
++  const size_t nb = (size_t)bw * bh;
++  if(nb < 16) return;
++
++  float *ms = dt_alloc_align_float(3 * nb);
++  if(!ms) return;
++  DT_OMP_FOR(collapse(2))
++  for(int by = 0; by < bh; by++)
++    for(int bx = 0; bx < bw; bx++)
++    {
++      double acc[3] = { 0.0, 0.0, 0.0 };
++      for(int y = by * bs; y < (by + 1) * bs; y++)
++      {
++        const float *row = detail + (size_t)4 * ((size_t)y * width + (size_t)bx * bs);
++        for(int x = 0; x < bs; x++)
++          for(int c = 0; c < 3; c++)
++            acc[c] += row[4 * x + c] * row[4 * x + c];
++      }
++      for(int c = 0; c < 3; c++)
++        ms[c * nb + (size_t)by * bw + bx] = acc[c] / ((double)bs * bs);
++    }
++  for(int c = 0; c < 3; c++)
++  {
++    qsort(ms + c * nb, nb, sizeof(float), _cmp_float);
++    sigma[c] = sqrtf(ms[c * nb + nb / 10]);
++  }
++  dt_free_align(ms);
+ }
+ 
+ static void process_wavelets(dt_iop_module_t *self,
+@@ -1552,6 +1641,27 @@ static void process_wavelets(dt_iop_module_t *self,
+ 
+   debug_dump_PFM(piece, "transformed", precond, width, height, 0);
+ 
++  // measured noise: rescale each channel so that the noise of its finest
++  // band is what the model assumes (1), divided by strength, whatever the
++  // profile, the white balance and demosaic made of it
++  dt_aligned_pixel_t gain = { 1.0f, 1.0f, 1.0f, 1.0f };
++  const gboolean band_noise = d->band_noise && d->use_new_vst;
++  if(band_noise)
++  {
++    dt_aligned_pixel_t unused, s0;
++    decompose(tmp, precond, buf, unused, 0, 1.0f, width, height);
++    _band_noise(buf, width, height, 0, s0);
++    for(int c = 0; c < 3; c++)
++      gain[c] = s0[c] > 0.0f ? s0[c] * (g_getenv("DT_DN_BNONCE") ? 1.0f : d->strength) : 1.0f;
++    DT_OMP_FOR()
++    for(size_t k = 0; k < npixels; k++)
++      for(int c = 0; c < 3; c++)
++        precond[4 * k + c] /= gain[c];
++    if(g_getenv("DT_DN_BANDNOISE_LOG"))
++      fprintf(stderr, "[bandnoise] scale-0 noise %g %g %g, gain %g %g %g\n",
++              s0[0], s0[1], s0[2], gain[0], gain[1], gain[2]);
++  }
++
+   float *restrict buf1 = precond;
+   float *restrict buf2 = tmp;
+ 
+@@ -1571,7 +1681,39 @@ static void process_wavelets(dt_iop_module_t *self,
+ 
+     const dt_aligned_pixel_t boost = { 1.0f, 1.0f, 1.0f, 1.0f };
+     dt_aligned_pixel_t thrs;
+-    variance_stabilizing_xform(thrs, scale, max_scale, npixels, sum_y2, d);
++    dt_aligned_pixel_t band_sigma;
++    if(band_noise)
++    {
++      // thresholds assume strength times the measured noise
++      _band_noise(buf, width, height, scale, band_sigma);
++      for(int c = 0; c < 3; c++)
++        band_sigma[c] = band_sigma[c] > 0.0f
++          ? band_sigma[c] * d->strength
++          : sigma_band;
++      if(g_getenv("DT_DN_BNFLOOR"))
++        for(int c = 0; c < 3; c++)
++          band_sigma[c] = fmaxf(band_sigma[c], sigma_band * d->strength);
++      if(g_getenv("DT_DN_BNGAIN"))
++        for(int c = 0; c < 3; c++)
++          band_sigma[c] = sigma_band * d->strength;
++      if(g_getenv("DT_DN_BANDNOISE_LOG"))
++        fprintf(stderr, "[bandnoise] scale %d noise x strength %g %g %g"
++                " (model %g)\n", scale, band_sigma[0], band_sigma[1],
++                band_sigma[2], sigma_band);
++    }
++    { char nm[32]; snprintf(nm, sizeof(nm), "detail_%d", scale); _inv_dump(piece, roi_in, nm, buf); }
++    variance_stabilizing_xform(thrs, scale, max_scale, npixels, sum_y2,
++                               band_noise ? band_sigma : NULL, d);
++    if(g_getenv("DT_DN_BNK") && band_noise)
++      for(int c = 0; c < 3; c++)
++        thrs[c] = atof(g_getenv("DT_DN_BNK")) * band_sigma[c] / d->strength;
++    if(g_getenv("DT_DN_BNKMIN") && band_noise)
++      for(int c = 0; c < 3; c++)
++        thrs[c] = fmaxf(thrs[c], atof(g_getenv("DT_DN_BNKMIN")) * band_sigma[c] / d->strength);
++    if(g_getenv("DT_DN_THRLOG") && dt_pipe_is_export(piece->pipe))
++      fprintf(stderr, "[thr] scale %d thrs %g %g %g std_y %g %g %g\n", scale,
++              thrs[0], thrs[1], thrs[2], sqrtf(sum_y2[0] / (npixels - 1.0f)),
++              sqrtf(sum_y2[1] / (npixels - 1.0f)), sqrtf(sum_y2[2] / (npixels - 1.0f)));
+     synthesize(out, out, buf, thrs, boost, width, height);
+ 
+     float *buf3 = buf2;
+@@ -1584,6 +1726,14 @@ static void process_wavelets(dt_iop_module_t *self,
+   for(size_t k = 0; k < 4U * npixels; k++)
+     out[k] += buf1[k];
+ 
++  if(band_noise)
++  {
++    DT_OMP_FOR()
++    for(size_t k = 0; k < npixels; k++)
++      for(int c = 0; c < 3; c++)
++        out[4 * k + c] *= gain[c];
++  }
++
+   if(!d->use_new_vst)
+   {
+     backtransform(out, width, height, aa, bb);
+@@ -2603,6 +2753,9 @@ int process_cl(dt_iop_module_t *self,
+   }
+   else if(d->mode == MODE_WAVELETS || d->mode == MODE_WAVELETS_AUTO)
+   {
++    // the measured-noise experiment exists on the CPU only
++    if(((dt_iop_denoiseprofile_data_t *)piece->data)->band_noise)
++      return DT_OPENCL_PROCESS_CL;
+     return process_wavelets_cl(self, piece, dev_in, dev_out, roi_in, roi_out);
+   }
+   else
+@@ -3006,6 +3159,7 @@ void commit_params(dt_iop_module_t *self,
+   d->wb_adaptive_anscombe = p->wb_adaptive_anscombe;
+   d->fix_anscombe_and_nlmeans_norm = p->fix_anscombe_and_nlmeans_norm;
+   d->use_new_vst = p->use_new_vst;
++  d->band_noise = g_getenv("DT_DN_BANDNOISE") != NULL;
+ }
+ 
+ void init_pipe(dt_iop_module_t *self,
