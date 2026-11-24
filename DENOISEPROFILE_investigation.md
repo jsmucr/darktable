@@ -198,26 +198,40 @@ A per-scale correction (estimate each band's noise from the data and
 correct the model's shape) was designed and then dropped before any code
 was written, since the shape is already about right.
 
-## Open questions
+## Round 1 TODOs
 
-1. What produces the dark single-pixel specks when wavelet strength is
-   raised? This blocks the obvious remedy of simply denoising harder.
-2. Is the low absolute level specific to high ISO? Run `bands.py` on a flat
+1. **Find what produces the dark single-pixel specks** when wavelet
+   strength is raised. They block the obvious remedy of denoising harder.
+   Known: they appear with RCD, PPG, AMaZE and LMMSE and with raw denoise
+   0.02 in front; they associate only weakly with photosites at or below
+   black level (session 2). Not yet tried: locating individual specks and
+   reading the demosaiced input at those pixels (an outlier going in, or
+   one created by the thresholding or the backtransform?), RGB instead of
+   Y0U0V0 mode, and varying `shadows` and `bias`, which shape the
+   transform and its inverse. `darktable-cli` cannot dump the module's
+   intermediate buffers (see Tools), so looking inside needs a temporary
+   local change. Done when the cause is shown, not just correlated.
+2. **Use the profile's per-channel a and b** in the wavelet and non-local
+   means paths instead of the green entry (`denoiseprofile.c:1532`,
+   `:1688`, `:1731`). The transforms take scalar a and b today. Check
+   with `bands.py` that the per-channel s0 levels move toward each other,
+   then compare renders. It changes the output of every existing edit, so
+   it needs a params version bump with the old behavior kept for old
+   histories, unchanged results on integration tests 0013 and 0027, and
+   the OpenCL path kept in sync. Whether the kernels in
+   `data/kernels/denoiseprofile.cl` take scalar a and b has not been
+   checked.
+
+## Later
+
+1. Is the low absolute level specific to high ISO? Run `bands.py` on a flat
    area of an ISO 200 G9 file and on another camera.
-3. Does the profiling-tool convention (Haar HH after demosaic) explain the
+2. Does the profiling-tool convention (Haar HH after demosaic) explain the
    gap quantitatively? Simulating white CFA noise through RCD and PPG and
    measuring both HH and per-band sigma would answer it.
-4. How far is darktable from the JPEG once color and sharpening match? Build
+3. How far is darktable from the JPEG once color and sharpening match? Build
    a proper history for P1378616 (its own WB and color calibration, some
    sharpening or diffuse or sharpen) before judging detail.
-
-## Candidate changes (not started)
-
-- Use the profile's per-channel a and b in the wavelet and non-local means
-  paths instead of the green entry. Small and contained, but it changes the
-  output of every existing edit, so it needs a params version bump with the
-  old behavior kept for old histories, and the OpenCL path kept in sync.
-- Anything about the specks, once their cause is known.
 
 ## What is not claimed here
 
