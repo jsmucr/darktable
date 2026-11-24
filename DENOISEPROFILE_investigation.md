@@ -21,11 +21,22 @@ in-camera noise reduction at its default (0).
   slower than white noise (0.225); after demosaic the measured fall-off is
   close to the model (session 3). Session 2 claimed the opposite; that claim
   is **retracted**, do not build on it.
-- **The absolute level the module works with is too low:** measured band
-  sigmas are 1.4-1.75x the model in green and 1.8-2.5x in red and blue. Part
-  of it is in the code: the wavelet and non-local means paths use only the
-  green profile entry for all channels (`denoiseprofile.c:1532`, `:1688`,
-  `:1731`), although the profile carries R and B values (session 3).
+- **The noise level the module works with is too low.** Measured inside
+  the module (session 5), the finest band carries 1.4-1.9x the noise the
+  model expects in RGB mode, in every channel and at three brightness
+  levels. Session 3 measured 1.8-2.5x for red and blue, but without white
+  balance, which the module never sees (session 5).
+- **Using the profile's red and blue entries makes it worse, not better.**
+  Profiles are measured with white balance off before demosaic; the module
+  gets white-balanced, demosaiced data, where green is the noisiest channel.
+  Applying the per-channel entries widens the channel imbalance at all
+  three levels (session 5). Round 1 TODO 2 is closed on that.
+- **In Y0U0V0 mode (the default) luma carries about 5x the noise the
+  model expects and chroma about 0.25x** (session 5). Demosaic correlates
+  the noise across channels (0.5-0.74), which the matrix ignores, and the
+  luma row is not unit-variance even under the module's own assumption. So
+  the default luma threshold is about 0.3 sigma, which explains the
+  leftover grain, and all chroma detail is discarded at every scale.
 - **A uniform level correction is what the strength slider already does.**
   Strength around 2 removes the grain but softens fine detail and leaves
   **isolated dark single-pixel specks** in wavelet mode. The specks, not the
@@ -86,6 +97,14 @@ plus ImageMagick and the built `darktable-cli`:
   input, transform and the finest detail band. `tails.py` measures the
   asymmetry of the noise tails before and after the transform (its labels
   say Y0/U0/V0; in RGB mode the channels are R, G, B).
+- `perchannel.sh` re-runs session 5 in under 2 minutes: it applies
+  `perchannel.patch` and `instrumentation.patch`, dumps three flat patches
+  with the per-channel switch off and on, runs `detail_noise.py` (noise per
+  channel and scale in the module's own detail bands, and the
+  cross-channel correlation), repeats the RCD export with and without white
+  balance, and restores the source on exit.
+- `perchannel.patch`: the session 5 experiment, switched on with
+  `DT_DN_PERCHANNEL=1`; bit-identical output when off.
 - `profiling_xmp.py` writes `tools/noise/profiling-shot.xmp` variants with an
   explicit demosaic entry: PPG, RCD, and passthrough monochrome (`cfa.xmp`,
   one raw photosite value per pixel). The stock XMP has no demosaic entry,
@@ -211,7 +230,10 @@ mean, which is what the module normalizes to:
   the model; the level is off by a roughly constant factor per channel.
 - The red and blue excess over green (1.44x and 1.28x at s0) is in the
   direction of the profile's own R/B entries, which the module ignores:
-  sqrt(a_R/a_G) = 1.27, sqrt(a_B/a_G) = 1.21.
+  sqrt(a_R/a_G) = 1.27, sqrt(a_B/a_G) = 1.21. **Superseded by session 5:**
+  these exports demosaic without white balance, as the profiling XMP does.
+  With the image's white balance applied before demosaic, as in a normal
+  pipeline, red and blue come out below green.
 - The module's empirical factors already push the other way:
   `adjt` = 8 "because it seemed a little weak" (`:1375`) and 2.5x strength
   in Y0U0V0 mode (`:1514`). How much of the measured gap they absorb has not
@@ -301,6 +323,76 @@ floor (`:1370-1372`) and all chroma detail is discarded; the chroma comes
 from the residue alone.
 Belongs with TODO 2, since it is a noise-level question.
 
+## Session 5: per-channel profile entries do not fit the module
+
+Experiment: `perchannel.patch` passes the profile's a and b per channel to
+the RGB-mode and non-local means transforms, and in Y0U0V0 mode weights the
+conversion matrix by sqrt(a_c / a_G) instead, keeping one transform gain so
+U0 and V0 still cancel the signal (`set_up_conversion_matrices`,
+`denoiseprofile.c:1291`). It is switched on with `DT_DN_PERCHANNEL=1`.
+Switched off, its output is bit-identical to the unpatched module for
+wavelets Y0U0V0, wavelets RGB, strength 2 and non-local means auto. The
+OpenCL side is changed to match but was only compiled: this machine has no
+OpenCL device.
+
+Noise of the finest detail band inside the module (`detail_noise.py` on
+the instrumented dumps, wavelets RGB at strength 1; the model expects 1.0
+in every channel):
+
+| patch (input mean R G B) | switch | R | G | B |
+|---|---|---|---|---|
+| wall 800,150 480x320 | off | 1.52 | 1.91 | 1.62 |
+| | on | 1.20 | 1.91 | 1.34 |
+| mid 3100,850 480x200 (0.036 0.043 0.045) | off | 1.41 | 1.83 | 1.53 |
+| | on | 1.11 | 1.83 | 1.26 |
+| bright 3100,1290 480x150 (0.085 0.095 0.102) | off | 1.38 | 1.79 | 1.50 |
+| | on | 1.08 | 1.79 | 1.24 |
+
+Inside the module green is the noisiest channel at every level, and the
+per-channel entries lower red and blue further. By scale 1 the channels are
+within 10% of each other with the switch off.
+
+Why session 3 pointed the other way: the profiling XMP sets white balance
+to 1, 1, 1, so the profile and every session 2-3 export were demosaiced
+without white balance. The same RCD export with this image's white balance
+(2.414, 1, 1.828) applied before demosaic, then divided back out, gives
+R 1.46, G 1.76, B 1.56 at scale 0 against R 2.52, G 1.75, B 2.24 without it,
+matching the module's own numbers. RCD does not treat channels
+independently of their scaling, so the per-channel noise after demosaic
+depends on the white balance, and the profile's R and B entries describe a
+pipeline the module never sees.
+
+Y0U0V0 mode (strength 1, same instrumented dumps):
+
+| patch | Y0 | U0 | V0 |
+|---|---|---|---|
+| wall | 5.21 | 0.26 | 0.25 |
+| mid | 4.99 | 0.24 | 0.24 |
+| bright | 4.86 | 0.24 | 0.23 |
+
+The model expects 1.0 for all three. Two causes, both measured or read:
+
+- Demosaic correlates the noise across channels: in RGB-mode detail_0 the
+  correlation is RG 0.69-0.71, RB 0.52-0.55, GB 0.72-0.74 at the three
+  levels. The matrix variances assume independent channels, so the sum
+  (Y0) is underestimated and the differences (U0, V0) overestimated.
+- The Y0 row is not unit-variance even under the module's assumption that
+  each channel's noise std is its white balance factor. The comment above
+  it asks for var(sqrt(3) Y0) = 1, but the code multiplies by the sum of
+  1/wb (`denoiseprofile.c:1311`) where a weighted mean would divide by it.
+  For this image the row gives std 3S/2.5 = 2.35 (S = sum of 1/wb = 1.961,
+  2.5 = the Y0U0V0 strength compensation, `:1514`); dividing would give
+  0.61. Whether this is a bug or an intended scale later tuned around by
+  the 2.5 is not known; the 2.5 comment says the mode "was much less
+  denoised" without it.
+
+Consequences at the default strength: the scale-0 luma threshold is 1.59
+against a measured luma noise of 5.2, i.e. 0.3 sigma, so soft thresholding
+barely touches the luma grain. The chroma variance is below the model's
+noise variance at every scale, so the BayesShrink threshold hits its floor
+(8000 at scale 0) and all chroma detail is dropped; chroma comes from the
+coarsest residue alone.
+
 ## Round 1 TODOs
 
 1. **Done (session 4): what produces the dark specks.** The concave
@@ -312,8 +404,10 @@ Belongs with TODO 2, since it is a noise-level question.
    against their neighbors before or during thresholding (soft, hard and
    garrote thresholding all pass large coefficients by design), or choose
    the exponent by signal level instead of a global `shadows`.
-2. **Use the profile's per-channel a and b** in the wavelet and non-local
-   means paths instead of the green entry (`denoiseprofile.c:1532`,
+2. **Closed (session 5): the per-channel profile entries do not fit the
+   module**, see there; the experiment is kept as `perchannel.patch`.
+   Original entry: use the profile's per-channel a and b in the wavelet and
+   non-local means paths instead of the green entry (`denoiseprofile.c:1532`,
    `:1688`, `:1731`). The transforms take scalar a and b today. Check
    with `bands.py` that the per-channel s0 levels move toward each other,
    then compare renders. It changes the output of every existing edit, so
@@ -322,6 +416,18 @@ Belongs with TODO 2, since it is a noise-level question.
    the OpenCL path kept in sync. Whether the kernels in
    `data/kernels/denoiseprofile.cl` take scalar a and b has not been
    checked.
+
+## Round 2 candidates
+
+1. **Y0U0V0 noise normalization.** Luma 5x, chroma 0.25x the model
+   (session 5). Either account for the cross-channel correlation and fix the
+   Y0 row scale, or estimate the luma and chroma noise per band from the
+   data. Changes every default-mode edit, so it would need a params version
+   with the old behavior kept for old histories.
+2. **The specks** (session 4 has the fix directions).
+3. **Profiling convention.** Profiles are measured without white balance
+   (`tools/noise/profiling-shot.xmp`) and with the finest Haar diagonal
+   coefficient (session 3); both differ from what the module sees.
 
 ## Later
 

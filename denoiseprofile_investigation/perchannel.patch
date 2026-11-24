@@ -1,0 +1,245 @@
+diff --git a/src/iop/denoiseprofile.c b/src/iop/denoiseprofile.c
+index 784d46e509..ba278a6a3d 100644
+--- a/src/iop/denoiseprofile.c
++++ b/src/iop/denoiseprofile.c
+@@ -192,6 +192,7 @@ typedef struct dt_iop_denoiseprofile_data_t
+   gboolean fix_anscombe_and_nlmeans_norm; // backward compatibility options
+   gboolean use_new_vst;                   // backward compatibility options
+   dt_iop_denoiseprofile_wavelet_mode_t wavelet_color_mode; // switch between RGB and Y0U0V0 modes.
++  gboolean per_channel_profile;           // use the profile's R and B entries, not green for all
+ } dt_iop_denoiseprofile_data_t;
+ 
+ typedef struct dt_iop_denoiseprofile_global_data_t
+@@ -995,22 +996,22 @@ static inline void precondition_v2(const float *const in,
+                                    float *const buf,
+                                    const int wd,
+                                    const int ht,
+-                                   const float a,
++                                   const dt_aligned_pixel_t a,
+                                    const dt_aligned_pixel_t p,
+-                                   const float b,
++                                   const dt_aligned_pixel_t b,
+                                    const dt_aligned_pixel_t wb)
+ {
+   const size_t npixels = (size_t)wd * ht;
+   const dt_aligned_pixel_t expon = { -p[0] / 2 + 1, -p[1] / 2 + 1, -p[2] / 2 + 1, 1.0f };
+-  const dt_aligned_pixel_t denom = { (-p[0] + 2) * sqrtf(a), (-p[1] + 2) * sqrtf(a),
+-                                     (-p[2] + 2) * sqrtf(a), 1.0f };
++  const dt_aligned_pixel_t denom = { (-p[0] + 2) * sqrtf(a[0]), (-p[1] + 2) * sqrtf(a[1]),
++                                     (-p[2] + 2) * sqrtf(a[2]), 1.0f };
+ 
+   DT_OMP_FOR()
+   for(size_t j = 0; j < 4U * npixels; j += 4)
+   {
+     dt_aligned_pixel_t scaled;
+-    for_each_channel(c,aligned(in,wb))
+-      scaled[c] = MAX(in[j+c] / wb[c] + b, 0.0f);
++    for_each_channel(c,aligned(in,wb,b))
++      scaled[c] = MAX(in[j+c] / wb[c] + b[c], 0.0f);
+     dt_aligned_pixel_t precond;
+ #ifdef VECTORIZE_POWF
+     dt_vector_powf(scaled, expon, precond);
+@@ -1087,9 +1088,9 @@ static inline void precondition_v2(const float *const in,
+ static inline void backtransform_v2(float *const buf,
+                                     const int wd,
+                                     const int ht,
+-                                    const float a,
++                                    const dt_aligned_pixel_t a,
+                                     const dt_aligned_pixel_t p,
+-                                    const float b,
++                                    const dt_aligned_pixel_t b,
+                                     const float bias,
+                                     const dt_aligned_pixel_t wb)
+ {
+@@ -1099,9 +1100,9 @@ static inline void backtransform_v2(float *const buf,
+                                      1.0f / (1.0f - p[2] / 2.0f),
+                                      1.0f };
+ 
+-  const dt_aligned_pixel_t denom = { 4.0f / (sqrtf(a) * (2.0f - p[0])),
+-                                     4.0f / (sqrtf(a) * (2.0f - p[1])),
+-                                     4.0f / (sqrtf(a) * (2.0f - p[2])),
++  const dt_aligned_pixel_t denom = { 4.0f / (sqrtf(a[0]) * (2.0f - p[0])),
++                                     4.0f / (sqrtf(a[1]) * (2.0f - p[1])),
++                                     4.0f / (sqrtf(a[2]) * (2.0f - p[2])),
+                                      1.0f };
+   DT_OMP_FOR()
+   for(size_t j = 0; j < 4U * npixels; j += 4)
+@@ -1120,8 +1121,8 @@ static inline void backtransform_v2(float *const buf,
+     for_each_channel(c)
+       back[c] = powf(z1[c], expon[c]);
+ #endif
+-    for_each_channel(c,aligned(buf))
+-      buf[j+c] = wb[c] * (back[c] - b);
++    for_each_channel(c,aligned(buf,b))
++      buf[j+c] = wb[c] * (back[c] - b[c]);
+   }
+ }
+ 
+@@ -1248,6 +1249,35 @@ static void compute_wb_factors(dt_aligned_pixel_t wb,
+   return;
+ }
+ 
++// the profile's a and b per channel, or the green entry for all three
++// channels, which is what the module did before per_channel_profile
++static void _profile_coeffs(const dt_iop_denoiseprofile_data_t *const d,
++                            dt_aligned_pixel_t a,
++                            dt_aligned_pixel_t b)
++{
++  for(int c = 0; c < 3; c++)
++  {
++    const int k = d->per_channel_profile ? c : 1;
++    a[c] = d->a[k];
++    b[c] = d->b[k];
++  }
++  a[3] = d->a[1];
++  b[3] = d->b[1];
++}
++
++// Y0U0V0 needs the same transform gain in all channels, or U0 and V0 stop
++// cancelling the signal (see set_up_conversion_matrices), so the
++// per-channel noise enters through the matrix: it treats wb as the noise
++// standard deviation of each channel, which scales with sqrt(a)
++static void _noise_weighted_wb(dt_aligned_pixel_t out,
++                               const dt_aligned_pixel_t wb,
++                               const dt_aligned_pixel_t a)
++{
++  for(int c = 0; c < 3; c++)
++    out[c] = wb[c] * sqrtf(a[c] / a[1]);
++  out[3] = wb[3];
++}
++
+ // =====================================================================================
+ 
+ static gboolean invert_matrix(const dt_colormatrix_t in,
+@@ -1496,6 +1526,12 @@ static void process_wavelets(dt_iop_module_t *self,
+   const float compensate_p =
+     DT_IOP_DENOISE_PROFILE_P_FULCRUM / powf(DT_IOP_DENOISE_PROFILE_P_FULCRUM, d->shadows);
+ 
++  dt_aligned_pixel_t pa, pb;
++  _profile_coeffs(d, pa, pb);
++  dt_aligned_pixel_t pa_p, noise_wb;
++  for_each_channel(c) pa_p[c] = pa[c] * compensate_p;
++  _noise_weighted_wb(noise_wb, wb, pa);
++
+   // conversion to Y0U0V0 space as defined in Secrets of image denoising cuisine
+   dt_colormatrix_t toY0U0V0 = { { 1.0f/3.0f, 1.0f/3.0f, 1.0f/3.0f, 0.0f },
+                                 {  0.5f,      0.0f,    -0.5f,      0.0f },
+@@ -1507,7 +1543,7 @@ static void process_wavelets(dt_iop_module_t *self,
+                              { 0.0f, 0.0f, 0.0f, 0.0f },
+                              { 0.0f, 0.0f, 0.0f, 0.0f },
+                              { 0.0f, 0.0f, 0.0f, 0.0f }};
+-  set_up_conversion_matrices(toY0U0V0, toRGB, wb);
++  set_up_conversion_matrices(toY0U0V0, toRGB, noise_wb);
+ 
+   // more strength in Y0U0V0 in order to get a similar smoothing as in other modes
+   // otherwise, result was much less denoised in Y0U0V0 mode.
+@@ -1540,7 +1576,7 @@ static void process_wavelets(dt_iop_module_t *self,
+   }
+   else if(d->wavelet_color_mode == MODE_RGB)
+   {
+-    precondition_v2(in, precond, width, height, d->a[1] * compensate_p, p, d->b[1], wb);
++    precondition_v2(in, precond, width, height, pa_p, p, pb, wb);
+   }
+   else
+   {
+@@ -1590,8 +1626,8 @@ static void process_wavelets(dt_iop_module_t *self,
+   }
+   else if(d->wavelet_color_mode == MODE_RGB)
+   {
+-    backtransform_v2(out, width, height, d->a[1] * compensate_p,
+-                     p, d->b[1], d->bias - 0.5 * logf(in_scale), wb);
++    backtransform_v2(out, width, height, pa_p,
++                     p, pb, d->bias - 0.5 * logf(in_scale), wb);
+   }
+   else
+   {
+@@ -1697,8 +1733,11 @@ static float nlmeans_precondition(const dt_iop_denoiseprofile_data_t *const d,
+   }
+   else
+   {
++    dt_aligned_pixel_t pa, pb;
++    _profile_coeffs(d, pa, pb);
++    for_each_channel(c) pa[c] *= compensate_p;
+     precondition_v2((float *)ivoid, in, roi_in->width, roi_in->height,
+-                    d->a[1] * compensate_p, p, d->b[1], wb);
++                    pa, p, pb, wb);
+   }
+   return compensate_p;
+ }
+@@ -1738,10 +1777,12 @@ static float nlmeans_precondition_cl(const dt_iop_denoiseprofile_data_t *const d
+     DT_IOP_DENOISE_PROFILE_P_FULCRUM / powf(DT_IOP_DENOISE_PROFILE_P_FULCRUM, d->shadows);
+   if(d->use_new_vst)
+   {
++    dt_aligned_pixel_t pa, pb;
++    _profile_coeffs(d, pa, pb);
+     for_each_channel(c,aligned(aa,bb))
+     {
+-      aa[c] = d->a[1] * compensate_p;
+-      bb[c] = d->b[1];
++      aa[c] = pa[c] * compensate_p;
++      bb[c] = pb[c];
+     }
+   }
+   return compensate_p;
+@@ -1765,9 +1806,11 @@ static void nlmeans_backtransform(const dt_iop_denoiseprofile_data_t *const d,
+   }
+   else
+   {
++    dt_aligned_pixel_t pa, pb;
++    _profile_coeffs(d, pa, pb);
++    for_each_channel(c) pa[c] *= compensate_p;
+     backtransform_v2((float *)ovoid, roi_in->width, roi_in->height,
+-                     d->a[1] * compensate_p, p, d->b[1],
+-                     d->bias - 0.5 * logf(scale), wb);
++                     pa, p, pb, d->bias - 0.5 * logf(scale), wb);
+   }
+   return;
+ }
+@@ -1928,8 +1971,11 @@ static void process_variance(dt_iop_module_t *self,
+ 
+   const float compensate_p =
+     DT_IOP_DENOISE_PROFILE_P_FULCRUM / powf(DT_IOP_DENOISE_PROFILE_P_FULCRUM, d->shadows);
++  dt_aligned_pixel_t pa, pb;
++  _profile_coeffs(d, pa, pb);
++  for_each_channel(c) pa[c] *= compensate_p;
+   precondition_v2((float *)ivoid, (float *)ovoid, roi_in->width, roi_in->height,
+-                  d->a[1] * compensate_p, p, d->b[1], wb);
++                  pa, p, pb, wb);
+ 
+   float *out = (float *)ovoid;
+   // we use out as a temporary buffer here
+@@ -2329,7 +2375,11 @@ static int process_wavelets_cl(dt_iop_module_t *self,
+   dt_colormatrix_t toRGB_tmp = { { 0.0f, 0.0f, 0.0f },
+                                  { 0.0f, 0.0f, 0.0f },
+                                  { 0.0f, 0.0f, 0.0f } };
+-  set_up_conversion_matrices(toY0U0V0_tmp, toRGB_tmp, wb);
++  dt_aligned_pixel_t pa, pb;
++  _profile_coeffs(d, pa, pb);
++  dt_aligned_pixel_t noise_wb;
++  _noise_weighted_wb(noise_wb, wb, pa);
++  set_up_conversion_matrices(toY0U0V0_tmp, toRGB_tmp, noise_wb);
+ 
+   // more strength in Y0U0V0 in order to get a similar smoothing as in other modes
+   // otherwise, result was much less denoised in Y0U0V0 mode.
+@@ -2361,10 +2411,11 @@ static int process_wavelets_cl(dt_iop_module_t *self,
+     DT_IOP_DENOISE_PROFILE_P_FULCRUM / powf(DT_IOP_DENOISE_PROFILE_P_FULCRUM, d->shadows);
+   if(d->use_new_vst)
+   {
++    const gboolean rgb = d->wavelet_color_mode == MODE_RGB;
+     for_each_channel(c)
+     {
+-      aa[c] = d->a[1] * compensate_p;
+-      bb[c] = d->b[1];
++      aa[c] = (rgb ? pa[c] : pa[1]) * compensate_p;
++      bb[c] = rgb ? pb[c] : pb[1];
+     }
+   }
+ 
+@@ -3006,6 +3057,7 @@ void commit_params(dt_iop_module_t *self,
+   d->wb_adaptive_anscombe = p->wb_adaptive_anscombe;
+   d->fix_anscombe_and_nlmeans_norm = p->fix_anscombe_and_nlmeans_norm;
+   d->use_new_vst = p->use_new_vst;
++  d->per_channel_profile = g_getenv("DT_DN_PERCHANNEL") != NULL;
+ }
+ 
+ void init_pipe(dt_iop_module_t *self,

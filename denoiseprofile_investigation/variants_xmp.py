@@ -52,6 +52,7 @@ def rawdenoise(threshold):
 VARIANTS = {
     'none': [],
     'wav_default': [('denoiseprofile', 12, denoiseprofile())],
+    'wav_default_rgb': [('denoiseprofile', 12, denoiseprofile(color=0))],
     'wav_strong': [('denoiseprofile', 12,
                     denoiseprofile(strength=2.0, chroma=0.8, luma=0.6))],
     'wav_strong_rgb': [('denoiseprofile', 12,
