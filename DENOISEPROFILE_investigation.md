@@ -66,7 +66,13 @@ in-camera noise reduction at its default (0).
   removes the mottle and keeps more detail** (session 7): at the JPEG's
   wall noise, bird detail is 0.20 against 0.15 for the old mode and 0.18
   for the JPEG, with the old mode's low mottle. What is left on flat areas
-  and in texture is **specks**, which are now the main thing to fix.
+  and in texture is **specks**.
+- **Wiener shrinkage on luma, a wider window and a despeck pass remove
+  the specks** (session 8). At strength 1.1, against the JPEG: half the
+  wall noise, 12% more feather detail, a third of the wall specks and a
+  tenth of the mottle. Against old mode at 3.0: the same wall noise with
+  41% more feather detail. Left: a grain halo a few pixels wide along
+  strong edges, which the JPEG also has.
 
 ## Samples
 
@@ -115,6 +121,10 @@ plus ImageMagick and the built `darktable-cli`:
   channel and scale in the module's own detail bands, and the
   cross-channel correlation), repeats the RCD export with and without white
   balance, and restores the source on exit.
+- `quick.sh` renders only the three `tradeoff.py` regions of P1378616 as
+  a crop set (session 8), in 4-10 s per variant; `crop_xmp.py` writes the
+  cropped histories, and `tradeoff.py` takes a crop set's prefix in place
+  of a render. `session8.sh` re-runs session 8 with it in about 5 minutes.
 - `perchannel.patch`: the session 5 experiment, switched on with
   `DT_DN_PERCHANNEL=1`; bit-identical output when off.
 - `bandnoise.sh` re-runs sessions 6 and 7 in about 20 minutes: it renders four
@@ -123,7 +133,7 @@ plus ImageMagick and the built `darktable-cli`:
   variants at 16 bit, prints `tradeoff.py` for all of them, the per-scale
   estimates and thresholds, and the wall's own band noise, and restores the
   source on exit. Leaves about 3.3 GB of renders in its work directory.
-- `bandnoise.patch`: the session 6 and 7 experiments (`DT_DN_BANDNOISE=1`
+- `bandnoise.patch`: the session 6-8 experiments (`DT_DN_BANDNOISE=1`
   and the variant switches listed there); bit-identical output when off. It
   carries its own copy of the detail-band dump, so do not stack
   `instrumentation.patch` on it.
@@ -570,6 +580,95 @@ Caveats as in session 6. The speck count is a 5x5-median test, which also
 counts fine texture and is only comparable between renders of the same
 crop.
 
+## Session 8: Wiener shrinkage, wider windows and a despeck pass
+
+Faster loop first: `quick.sh` renders only the three `tradeoff.py`
+regions plus a 300 px margin (`crop_xmp.py` appends a crop to the
+history; the pipe then processes only that region). A variant takes 4-10 s
+instead of 17 s per frame, and sweeps run in parallel. The module's scale
+count follows the full image (`denoiseprofile.c:917`), but the measured
+band noise would come from the crop, so `DT_DN_BNFIXED` passes the full
+frame's estimates in, measured once per strength and despeck level and
+cached. With that, crop sets match full-frame renders within one unit of
+the last printed digit in every `tradeoff.py` column (checked on eight
+variants, r 4 to 16). This works only for local thresholds: the whole-band rule takes its
+variance from the crop (old mode at 3.0 reads 0.0065 wall noise on crops
+against 0.0085 on the frame).
+
+New switches in `bandnoise.patch`, all on top of `DT_DN_BNLOCAL`:
+
+- `DT_DN_BNLBO=b`: leave a block of radius b << scale out of the window
+  instead of the coefficient alone. Demosaic spreads an outlier into a
+  2-3 px blob (4x crops of the wall), whose other members still lowered
+  the threshold under plain leave-one-out.
+- `DT_DN_BNWIENER=1` (all channels) or `=y` (luma only): attenuate each
+  coefficient by its local Wiener gain sx^2 / (sx^2 + sn^2) instead of soft
+  thresholding. Soft thresholding keeps only the largest noise
+  coefficients, which is what turns leftover noise into isolated specks.
+  Wiener scales all of them down.
+- `DT_DN_DESPECK=k`: before the decomposition, a value more than k finest-band
+  sigmas beyond all 8 of its neighbors is pulled back to the nearest
+  neighbor value. Lines and edges keep a neighbor on their own side. At
+  strength 1.1, k = 2 touches 1.1% and k = 3 0.3% of the values.
+- `DT_DN_BNFIXED`: see above.
+
+Results (crop sets, strength in the name, all with leave-block-out 1
+except the `loo` rows; `ds` is the despeck k):
+
+| render | wall noise | bird detail | wall chroma | wall mottle | specks | grass specks |
+|---|---|---|---|---|---|---|
+| old 3.0 (full frame) | 0.0085 | 0.142 | 0.105 | 0.0020 | 169 | 204 |
+| session 7, loo r4 1.1 | 0.0165 | 0.200 | 0.126 | 0.0020 | 610 | 2544 |
+| loo r4 ds2 1.1 | 0.0128 | 0.200 | 0.106 | 0.0018 | 428 | 2003 |
+| Wiener all r4 1.25 | 0.0082 | 0.192 | 0.348 | 0.0013 | 16 | 328 |
+| Wiener luma r4 1.1 | 0.0186 | 0.200 | 0.133 | 0.0021 | 410 | 1957 |
+| Wiener luma r4 1.2 | 0.0090 | 0.195 | 0.095 | 0.0010 | 45 | 597 |
+| Wiener luma r8 1.1 | 0.0114 | 0.200 | 0.100 | 0.0009 | 43 | 1184 |
+| Wiener luma r8 ds2 1.1 | 0.0094 | 0.200 | 0.095 | 0.0008 | 11 | 693 |
+| Wiener luma r16 ds2 1.0 | 0.0246 | 0.206 | 0.147 | 0.0031 | 132 | 3395 |
+| Wiener luma r16 ds2 1.1 | 0.0049 | 0.199 | 0.086 | 0.0004 | 0 | 359 |
+| camera JPEG | 0.0187 | 0.179 | (other colors) | 0.0100 | 30 | 1954 |
+
+What each step does:
+
+- **Despeck alone** helps a little: at loo r4 1.1, wall specks drop from
+  610 to 428 (k = 2) and 541 (k = 3), at no cost in bird detail. k = 2
+  beats k = 3 at every radius tried.
+- **Leave-block-out** alone barely moves anything (540 against 610).
+- **Wiener on luma** leaves fewer specks at lower wall noise than soft
+  thresholding: r4 at 1.2 has 45 on the wall and 597 on the grass at
+  0.0090, soft thresholding (loo r4 1.15, session 7) 263 and 1607 at
+  0.0105. On chroma it leaves about 4x the chroma noise, since soft
+  thresholding removes the chroma bands outright (session 6); keep soft
+  thresholding there.
+- **Wider windows** lower the noise at the same strength and the same bird
+  detail: at 1.1, wall noise 0.0186, 0.0140, 0.0114 and 0.0070 for r 4,
+  6, 8 and 16, bird 0.199-0.200 throughout. On a flat area a wider window
+  estimates the signal variance as zero more reliably; in the feathers
+  the texture still fills it.
+
+Best settings: Wiener on luma, leave-block-out 1, despeck 2, r 8 or 16,
+strength 1.1. Against old mode at 3.0, r8 has about the same wall noise
+with 41% more bird detail, under a tenth of the wall specks and less
+mottle.
+Against the JPEG it has half the wall noise, 12% more bird detail (no
+sharpening on our side), a third of the wall specks and a tenth of the
+mottle. r16 is cleaner still at the same detail.
+
+Visually (2x crops of wall, feathers, grass and the branch edge, not
+kept), r8 and r16 at 1.1 have clean walls, the feather and grass texture
+of the session 7 renders, and no visible specks. r4 Wiener at 1.2 leaves
+faint grainy patches on the wall where the small window overestimates
+the signal. One thing stands out that no metric measures: a **grain halo
+along strong edges**. Next to the branch against the bright background,
+grain survives in a band a few pixels wide, since the window there takes
+the edge's variance as signal. The JPEG has a similar band; old 3.0 has
+none.
+
+Open: the halo (an edge-aware or directional window would be the next
+try), the steep strength response (wall noise falls 5x between 1.0 and
+1.1 at r16), and everything from session 6's caveats.
+
 ## Round 1 TODOs
 
 1. **Done (session 4): what produces the dark specks.** The concave
@@ -597,15 +696,17 @@ crop.
 ## Round 2 candidates
 
 1. **Y0U0V0 noise normalization.** Luma 5x, chroma 0.25x the model
-   (session 5). **Tried in sessions 6 and 7** by measuring the noise per
-   band; normalization works, and local BayesShrink with leave-one-out
-   (r = 4) gives the best detail and mottle seen. Open before it could
-   become a real mode: the specks (next item), strength entering once,
-   the OpenCL path (the local variance needs a box filter there too),
-   other files and ISOs, and a params version with the old behavior kept
-   for old histories.
-2. **The specks** (session 4 has the fix directions). Now the limit of
-   the local mode (session 7), so the next thing to try, on top of it.
+   (session 5). **Tried in sessions 6-8** by measuring the noise per
+   band; normalization works, and local Wiener (luma) / BayesShrink
+   (chroma) with a despeck pass gives the best result seen (session 8).
+   Open before it could become a real mode: the edge halo, strength
+   entering once and its steep response, the OpenCL path (the local
+   variance needs a box filter there too), other files and ISOs, and a
+   params version with the old behavior kept for old histories.
+2. **The specks** (session 4 has the fix directions). Removed in the
+   local mode by session 8; the clipping and transform-exponent directions
+   were not needed and not tried. Next in that line: the grain halo along
+   edges.
 3. **Profiling convention.** Profiles are measured without white balance
    (`tools/noise/profiling-shot.xmp`) and with the finest Haar diagonal
    coefficient (session 3); both differ from what the module sees.

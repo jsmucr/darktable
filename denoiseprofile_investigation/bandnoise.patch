@@ -1,5 +1,5 @@
 diff --git a/src/iop/denoiseprofile.c b/src/iop/denoiseprofile.c
-index 784d46e509..404f366f95 100644
+index 784d46e509..9ca3b96a52 100644
 --- a/src/iop/denoiseprofile.c
 +++ b/src/iop/denoiseprofile.c
 @@ -24,6 +24,8 @@
@@ -101,7 +101,7 @@ index 784d46e509..404f366f95 100644
  
    const int offset_scale = DT_IOP_DENOISE_PROFILE_BANDS - max_scale;
    const int band_index = DT_IOP_DENOISE_PROFILE_BANDS - (scale + offset_scale + 1);
-@@ -1420,7 +1461,56 @@ static void variance_stabilizing_xform(dt_aligned_pixel_t thrs,
+@@ -1420,7 +1461,73 @@ static void variance_stabilizing_xform(dt_aligned_pixel_t thrs,
      adjt[2] *= band_force_exp_2;
    }
    for_each_channel(c)
@@ -156,10 +156,27 @@ index 784d46e509..404f366f95 100644
 +    sigma[c] = sqrtf(ms[c * nb + nb / 10]);
 +  }
 +  dt_free_align(ms);
++}
++
++// DT_DN_BNFIXED="<3 values for scale 0> <3 per scale 0..6>": use these
++// band noise estimates (a full-frame DT_DN_BANDNOISE_LOG run's, the
++// second group divided by strength) instead of measuring, so that crop
++// renders match the full frame. Returns FALSE when not set
++static gboolean _band_noise_fixed(const int slot, dt_aligned_pixel_t sigma)
++{
++  const char *e = g_getenv("DT_DN_BNFIXED");
++  if(!e) return FALSE;
++  gchar **v = g_strsplit_set(e, " ,", -1);
++  const guint n = g_strv_length(v);
++  const gboolean ok = n >= (guint)(3 * slot + 3);
++  if(ok)
++    for(int c = 0; c < 3; c++) sigma[c] = g_ascii_strtod(v[3 * slot + c], NULL);
++  g_strfreev(v);
++  return ok;
  }
  
  static void process_wavelets(dt_iop_module_t *self,
-@@ -1552,9 +1642,45 @@ static void process_wavelets(dt_iop_module_t *self,
+@@ -1552,9 +1659,98 @@ static void process_wavelets(dt_iop_module_t *self,
  
    debug_dump_PFM(piece, "transformed", precond, width, height, 0);
  
@@ -172,7 +189,8 @@ index 784d46e509..404f366f95 100644
 +  {
 +    dt_aligned_pixel_t unused, s0;
 +    decompose(tmp, precond, buf, unused, 0, 1.0f, width, height);
-+    _band_noise(buf, width, height, 0, s0);
++    if(!_band_noise_fixed(0, s0))
++      _band_noise(buf, width, height, 0, s0);
 +    for(int c = 0; c < 3; c++)
 +      gain[c] = s0[c] > 0.0f ? s0[c] * (g_getenv("DT_DN_BNONCE") ? 1.0f : d->strength) : 1.0f;
 +    DT_OMP_FOR()
@@ -182,6 +200,50 @@ index 784d46e509..404f366f95 100644
 +    if(g_getenv("DT_DN_BANDNOISE_LOG"))
 +      fprintf(stderr, "[bandnoise] scale-0 noise %g %g %g, gain %g %g %g\n",
 +              s0[0], s0[1], s0[2], gain[0], gain[1], gain[2]);
++
++    // DT_DN_DESPECK=k: a pixel more than k (finest-band noise sigmas, 1
++    // after the gain) beyond every one of its 8 neighbors is an isolated
++    // outlier, the session 4 specks; pull it back to the nearest neighbor
++    // value. Lines and edges keep a neighbor on their own side and pass
++    const float despeck = g_getenv("DT_DN_DESPECK")
++      ? atof(g_getenv("DT_DN_DESPECK")) : 0.0f;
++    if(despeck > 0.0f)
++    {
++      dt_iop_image_copy_by_size(tmp, precond, width, height, 4);
++      size_t changed = 0;
++      DT_OMP_FOR(reduction(+ : changed))
++      for(int y = 1; y < height - 1; y++)
++        for(int x = 1; x < width - 1; x++)
++        {
++          const size_t k = (size_t)y * width + x;
++          for(int c = 0; c < 3; c++)
++          {
++            float lo = FLT_MAX, hi = -FLT_MAX;
++            for(int dy = -1; dy <= 1; dy++)
++              for(int dx = -1; dx <= 1; dx++)
++              {
++                if(!dx && !dy) continue;
++                const float n = tmp[4 * (k + (ptrdiff_t)dy * width + dx) + c];
++                lo = fminf(lo, n);
++                hi = fmaxf(hi, n);
++              }
++            const float v = tmp[4 * k + c];
++            if(v < lo - despeck)
++            {
++              precond[4 * k + c] = lo;
++              changed++;
++            }
++            else if(v > hi + despeck)
++            {
++              precond[4 * k + c] = hi;
++              changed++;
++            }
++          }
++        }
++      if(g_getenv("DT_DN_BANDNOISE_LOG"))
++        fprintf(stderr, "[bandnoise] despeck %g: %zu of %zu values clamped\n",
++                despeck, changed, 3 * npixels);
++    }
 +  }
 +
    float *restrict buf1 = precond;
@@ -193,9 +255,17 @@ index 784d46e509..404f366f95 100644
 +  const float local_kmin = g_getenv("DT_DN_BNLKMIN")
 +    ? atof(g_getenv("DT_DN_BNLKMIN")) : 0.0f;
 +  const gboolean local_loo = g_getenv("DT_DN_BNLOO") != NULL;
++  const gboolean local_wiener = g_getenv("DT_DN_BNWIENER") != NULL;
++  const gboolean local_wiener_luma = local_wiener
++    && !strcmp(g_getenv("DT_DN_BNWIENER"), "y");
++  const int local_lbo = local_r > 0 && g_getenv("DT_DN_BNLBO")
++    ? atoi(g_getenv("DT_DN_BNLBO")) : 0;
++  float *const inner = local_lbo > 0 ? dt_alloc_align_float(4 * npixels) : NULL;
 +  float *const local = local_r > 0 ? dt_alloc_align_float(4 * npixels) : NULL;
-+  if(local_r > 0 && !local)
++  if((local_r > 0 && !local) || (local_lbo > 0 && !inner))
 +  {
++    dt_free_align(local);
++    dt_free_align(inner);
 +    dt_free_align(buf);
 +    dt_free_align(tmp);
 +    dt_free_align(precond);
@@ -205,7 +275,7 @@ index 784d46e509..404f366f95 100644
    // clear the output buffer, which will be accumulating all of the detail scales
    dt_iop_image_fill(out, 0.0f, width, height, 4);
  
-@@ -1571,7 +1697,82 @@ static void process_wavelets(dt_iop_module_t *self,
+@@ -1571,7 +1767,105 @@ static void process_wavelets(dt_iop_module_t *self,
  
      const dt_aligned_pixel_t boost = { 1.0f, 1.0f, 1.0f, 1.0f };
      dt_aligned_pixel_t thrs;
@@ -214,7 +284,8 @@ index 784d46e509..404f366f95 100644
 +    if(band_noise)
 +    {
 +      // thresholds assume strength times the measured noise
-+      _band_noise(buf, width, height, scale, band_sigma);
++      if(!_band_noise_fixed(1 + scale, band_sigma))
++        _band_noise(buf, width, height, scale, band_sigma);
 +      for(int c = 0; c < 3; c++)
 +        band_sigma[c] = band_sigma[c] > 0.0f
 +          ? band_sigma[c] * d->strength
@@ -264,9 +335,19 @@ index 784d46e509..404f366f95 100644
 +      for(size_t k = 0; k < npixels; k++)
 +        for_four_channels(c)
 +          local[4 * k + c] = buf[4 * k + c] * buf[4 * k + c];
++      // DT_DN_BNLBO=b: leave out a block of radius b << scale instead of
++      // the coefficient alone, since demosaic spreads an outlier photosite
++      // into a blob whose other members would still lower the threshold
++      const size_t rb = MIN((size_t)local_lbo << scale, r - 1);
++      if(local_lbo > 0)
++      {
++        dt_iop_image_copy_by_size(inner, local, width, height, 4);
++        dt_box_mean(inner, height, width, 4, rb, 1);
++      }
 +      dt_box_mean(local, height, width, 4, r, 1);
 +      // interior window size; dt_box_mean averages fewer pixels at the edges
 +      const float local_n = (2.0f * r + 1.0f) * (2.0f * r + 1.0f);
++      const float inner_n = (2.0f * rb + 1.0f) * (2.0f * rb + 1.0f);
 +      DT_OMP_FOR()
 +      for(size_t k = 0; k < npixels; k++)
 +      {
@@ -275,9 +356,21 @@ index 784d46e509..404f366f95 100644
 +          const float v = buf[4 * k + c];
 +          // leave-one-out: without it an outlier raises its own window's
 +          // variance, lowers its own threshold and survives as a speck
-+          const float m2 = local_loo
++          const float m2 = local_lbo > 0
++            ? (local[4 * k + c] * local_n - inner[4 * k + c] * inner_n)
++                / (local_n - inner_n)
++            : local_loo
 +            ? (local[4 * k + c] * local_n - v * v) / (local_n - 1.0f)
 +            : local[4 * k + c];
++          if(local_wiener && (c == 0 || !local_wiener_luma))
++          {
++            // DT_DN_BNWIENER=1 (=y: luma only): attenuate by the local Wiener gain instead
++            // of soft thresholding, which leaves only the largest noise
++            // coefficients and so turns the residual noise into specks
++            const float sx2 = MAX(0.0f, m2 - sb2[c]);
++            out[4 * k + c] += v * sx2 / (sx2 + sb2[c]);
++            continue;
++          }
 +          const float sx = sqrtf(MAX(1e-6f, m2 - sb2[c]));
 +          const float t = fmaxf(num[c] / sx, kfloor[c]);
 +          out[4 * k + c] += MAX(v - t, 0.0f) + MIN(v + t, 0.0f);
@@ -289,7 +382,7 @@ index 784d46e509..404f366f95 100644
      synthesize(out, out, buf, thrs, boost, width, height);
  
      float *buf3 = buf2;
-@@ -1584,6 +1785,14 @@ static void process_wavelets(dt_iop_module_t *self,
+@@ -1584,6 +1878,14 @@ static void process_wavelets(dt_iop_module_t *self,
    for(size_t k = 0; k < 4U * npixels; k++)
      out[k] += buf1[k];
  
@@ -304,15 +397,16 @@ index 784d46e509..404f366f95 100644
    if(!d->use_new_vst)
    {
      backtransform(out, width, height, aa, bb);
-@@ -1599,6 +1808,7 @@ static void process_wavelets(dt_iop_module_t *self,
+@@ -1599,6 +1901,8 @@ static void process_wavelets(dt_iop_module_t *self,
                           p, d->b[1], d->bias - 0.5 * logf(in_scale), wb, toRGB_trans);
    }
  
 +  dt_free_align(local);
++  dt_free_align(inner);
    dt_free_align(buf);
    dt_free_align(tmp);
    dt_free_align(precond);
-@@ -2603,6 +2813,9 @@ int process_cl(dt_iop_module_t *self,
+@@ -2603,6 +2907,9 @@ int process_cl(dt_iop_module_t *self,
    }
    else if(d->mode == MODE_WAVELETS || d->mode == MODE_WAVELETS_AUTO)
    {
@@ -322,7 +416,7 @@ index 784d46e509..404f366f95 100644
      return process_wavelets_cl(self, piece, dev_in, dev_out, roi_in, roi_out);
    }
    else
-@@ -3006,6 +3219,7 @@ void commit_params(dt_iop_module_t *self,
+@@ -3006,6 +3313,7 @@ void commit_params(dt_iop_module_t *self,
    d->wb_adaptive_anscombe = p->wb_adaptive_anscombe;
    d->fix_anscombe_and_nlmeans_norm = p->fix_anscombe_and_nlmeans_norm;
    d->use_new_vst = p->use_new_vst;

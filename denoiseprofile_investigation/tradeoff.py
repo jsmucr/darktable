@@ -1,6 +1,9 @@
 # noise left on the flat wall against detail kept on the bird, per render
 #
-#   python3 tradeoff.py <render.png> [...]
+#   python3 tradeoff.py <render.png | crop set> [...]
+#
+# a crop set is quick.sh output: <prefix> stands for <prefix>_wall.png,
+# <prefix>_bird.png and <prefix>_grass.png, each region at MARGIN, MARGIN
 #
 # on 16-bit renders of P1378616 (--conf plugins/imageio/format/png/bpp=16),
 # luminance, each crop normalized by its mean:
@@ -22,6 +25,14 @@ import sys
 WALL = '360x260+1900+500'
 BIRD = '360x260+2050+2050'
 GRASS = '360x260+600+3300'
+MARGIN = 300  # crop_xmp.py
+
+
+def region(p, geo, tag):
+    # full-frame render, or the matching file of a crop set
+    if p.endswith('.png') or p.endswith('.JPG'):
+        return p, geo
+    return f'{p}_{tag}.png', geo.split('+')[0] + f'+{MARGIN}+{MARGIN}'
 
 
 def hp_rms(path, geo, fine='0', coarse='0x6'):
@@ -66,9 +77,11 @@ def specks(path, geo):
 print(f'{"render":24s} wall noise  bird detail  ratio  wall chroma'
       '  wall mottle  specks  grass specks')
 for p in sys.argv[1:]:
-    w, b = hp_rms(p, WALL), hp_rms(p, BIRD)
-    c = chroma_rms(p, WALL)
-    m = hp_rms(p, WALL, '0x2', '0x16')
+    wall, bird, grass = (region(p, WALL, 'wall'), region(p, BIRD, 'bird'),
+                         region(p, GRASS, 'grass'))
+    w, b = hp_rms(*wall), hp_rms(*bird)
+    c = chroma_rms(*wall)
+    m = hp_rms(*wall, '0x2', '0x16')
     name = p.rsplit('/', 1)[-1].removesuffix('.png')
-    print(f'{name:24s} {w:10.4f}  {b:11.4f}  {b / w:5.2f}  {c:11.3f}'
-          f'  {m:11.4f}  {specks(p, WALL):6d}  {specks(p, GRASS):12d}')
+    print(f'{name:24s} {w:10.4f}  {b:11.4f}  {b / w if w else float('inf'):5.2f}  {c:11.3f}'
+          f'  {m:11.4f}  {specks(*wall):6d}  {specks(*grass):12d}')
