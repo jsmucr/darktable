@@ -333,7 +333,7 @@ U0 and V0 still cancel the signal (`set_up_conversion_matrices`,
 Switched off, its output is bit-identical to the unpatched module for
 wavelets Y0U0V0, wavelets RGB, strength 2 and non-local means auto. The
 OpenCL side is changed to match but was only compiled: this machine has no
-OpenCL device.
+OpenCL device (WSL2, see What is not claimed here).
 
 Noise of the finest detail band inside the module (`detail_noise.py` on
 the instrumented dumps, wavelets RGB at strength 1; the model expects 1.0
@@ -445,4 +445,9 @@ coarsest residue alone.
 - That the G9 or its JPEG engine does anything in particular; none of its
   processing was inspected.
 - That the findings hold beyond this one ISO 20000 file and one patch.
-- Anything about the OpenCL path: every render here ran on the CPU.
+- Anything about the OpenCL path: every render here ran on the CPU. The
+  machine is WSL2 (kernel 6.18.58.1-microsoft-standard-WSL2): `/dev/dxg` is
+  there, but the only OpenCL runtime installed is the native AMD APP one
+  (`/etc/OpenCL/vendors/amdocl64_60402_120.icd`), which finds 0 devices
+  (`clinfo -l`, `darktable-cltest`). OpenCL under WSL needs a runtime that
+  goes through `/dev/dxg`; none was tried.
