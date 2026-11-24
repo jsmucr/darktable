@@ -68,11 +68,16 @@ in-camera noise reduction at its default (0).
   for the JPEG, with the old mode's low mottle. What is left on flat areas
   and in texture is **specks**.
 - **Wiener shrinkage on luma, a wider window and a despeck pass remove
-  the specks** (session 8). At strength 1.1, against the JPEG: half the
-  wall noise, 12% more feather detail, a third of the wall specks and a
-  tenth of the mottle. Against old mode at 3.0: the same wall noise with
-  41% more feather detail. Left: a grain halo a few pixels wide along
+  the specks** (session 8). Against old mode at 3.0: the same wall noise
+  with 41% more feather detail (37% in session 9's properly exposed
+  render) and no specks. Left: a grain halo a few pixels wide along
   strong edges, which the JPEG also has.
+- **Against the JPEG, with this image's own white balance and matched
+  brightness** (session 9): a cleaner wall, comparable rock texture, but
+  the JPEG is crisper in the feathers and grass (0.179 against 0.139),
+  with Vivid color and in-camera sharpening. Session 8's "more detail
+  than the JPEG" was measured on renders 1.5 EV too dark and is
+  **retracted**. New: dark blue-green speckle in the rock texture.
 
 ## Samples
 
@@ -668,6 +673,52 @@ none.
 Open: the halo (an edge-aware or directional window would be the next
 try), the steep strength response (wall noise falls 5x between 1.0 and
 1.1 at r16), and everything from session 6's caveats.
+
+## Session 9: a render with this image's own color, beside the JPEG
+
+Every comparison up to session 8 used the template history, with another
+image's color calibration (green cast) and about 1.5 EV darker than the
+JPEG. For a fair look: keep only exposure, sigmoid and denoise (profiled)
+from the template, let darktable insert its defaults for the rest (as-shot
+white balance, no color calibration), and raise exposure from 0.7 to
+2.9 EV, which matches the JPEG's mean on the wall (G 0.501 against 0.497)
+and the bird (0.509 against 0.482). The white balance coefficients are
+the same as the template's (2.414, 1, 1.828, the camera's Cloudy), so the
+data denoise (profiled) sees does not change. New mode: Wiener luma, r 8,
+leave-block-out 1, despeck 2, strength 1.1. Old mode: strength 3, chroma
+0.8, shadows 0.5.
+
+| full frame | wall noise | bird detail | wall chroma | wall mottle | specks | grass specks |
+|---|---|---|---|---|---|---|
+| old 3.0 | 0.0063 | 0.101 | 0.199 | 0.0018 | 104 | 69 |
+| new | 0.0066 | 0.139 | 0.175 | 0.0009 | 0 | 59 |
+| camera JPEG | 0.0187 | 0.179 | 0.841 | 0.0100 | 30 | 1954 |
+
+**Correction to session 8:** with matched brightness the JPEG has more
+feather high-pass than the new mode (0.179 against 0.139), not 12% less.
+The earlier figures were measured on renders 1.5 EV darker, where the
+tone curve gives the same texture a different contrast relative to the
+mean. Comparisons between darktable renders under the same history are
+unaffected; comparisons with the JPEG before this session are not
+reliable.
+
+Visually (100% crops of the bird's head, the rock, the grass and the
+wall):
+
+- The new mode beats old mode everywhere: the rock keeps its grain
+  structure instead of melting into blobs, grass blades and the feather
+  pattern survive, and the wall is as clean.
+- Against the JPEG: our wall is cleaner (the JPEG leaves visible fine
+  grain), and the rock texture is comparable. The JPEG is crisper on
+  the bird's head and the grass, has stronger color (Vivid) and visible
+  sharpening; we have none.
+- New issue: the rock shows dark blue-green speckle in its texture that
+  the JPEG does not have. Most likely chroma noise surviving in texture,
+  where the local window takes the luma texture's variance as chroma
+  signal too. Not measured yet.
+
+The renders, the side-by-side and the 100% crops are in
+`/c/temp/denoise/compare/` on this machine, with the history used.
 
 ## Round 1 TODOs
 
