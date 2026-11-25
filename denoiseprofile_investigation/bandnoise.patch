@@ -1,5 +1,5 @@
 diff --git a/src/iop/denoiseprofile.c b/src/iop/denoiseprofile.c
-index 784d46e509..426e5b1af1 100644
+index 784d46e509..c3358fae59 100644
 --- a/src/iop/denoiseprofile.c
 +++ b/src/iop/denoiseprofile.c
 @@ -24,6 +24,8 @@
@@ -176,7 +176,7 @@ index 784d46e509..426e5b1af1 100644
  }
  
  static void process_wavelets(dt_iop_module_t *self,
-@@ -1552,12 +1659,107 @@ static void process_wavelets(dt_iop_module_t *self,
+@@ -1552,12 +1659,112 @@ static void process_wavelets(dt_iop_module_t *self,
  
    debug_dump_PFM(piece, "transformed", precond, width, height, 0);
  
@@ -256,6 +256,11 @@ index 784d46e509..426e5b1af1 100644
 +    ? atof(g_getenv("DT_DN_BNLKMIN")) : 0.0f;
 +  const gboolean local_loo = g_getenv("DT_DN_BNLOO") != NULL;
 +  const gboolean local_wiener = g_getenv("DT_DN_BNWIENER") != NULL;
++  const gboolean chroma_keep = g_getenv("DT_DN_BNCHROMAKEEP") != NULL;
++  const float luma_k = g_getenv("DT_DN_BNLUMAK")
++    ? atof(g_getenv("DT_DN_BNLUMAK")) : 0.0f;
++  const float luma_w = g_getenv("DT_DN_BNLUMAW")
++    ? CLAMP(atof(g_getenv("DT_DN_BNLUMAW")), 0.0f, 1.0f) : 0.0f;
 +  const gboolean local_cguide = local_r > 0 && g_getenv("DT_DN_BNCGUIDE")
 +    && d->wavelet_color_mode == MODE_Y0U0V0;
 +  float *const guide = local_cguide ? dt_alloc_align_float(4 * npixels) : NULL;
@@ -284,7 +289,7 @@ index 784d46e509..426e5b1af1 100644
    for(int scale = 0; scale < max_scale; scale++)
    {
      const float sigma = 1.0f;
-@@ -1571,7 +1773,158 @@ static void process_wavelets(dt_iop_module_t *self,
+@@ -1571,7 +1778,176 @@ static void process_wavelets(dt_iop_module_t *self,
  
      const dt_aligned_pixel_t boost = { 1.0f, 1.0f, 1.0f, 1.0f };
      dt_aligned_pixel_t thrs;
@@ -414,6 +419,12 @@ index 784d46e509..426e5b1af1 100644
 +          const float v = buf[4 * k + c];
 +          const float pred = local_cguide && c > 0 ? guide[4 * k + c] * yout : 0.0f;
 +          const float before = out[4 * k + c];
++          // DT_DN_BNCHROMAKEEP=1: keep all chroma detail (diagnostic)
++          if(c > 0 && chroma_keep)
++          {
++            out[4 * k + c] += v;
++            continue;
++          }
 +          // leave-one-out: without it an outlier raises its own window's
 +          // variance, lowers its own threshold and survives as a speck
 +          const float m2 = local_lbo > 0
@@ -428,7 +439,19 @@ index 784d46e509..426e5b1af1 100644
 +            // of soft thresholding, which leaves only the largest noise
 +            // coefficients and so turns the residual noise into specks
 +            const float sx2 = MAX(0.0f, m2 - sb2[c]);
-+            out[4 * k + c] += v * sx2 / (sx2 + sb2[c]) + pred;
++            float w = v * sx2 / (sx2 + sb2[c]);
++            // DT_DN_BNLUMAK=k, DT_DN_BNLUMAW=w: mix the luma Wiener result
++            // (weight w, default 0) with a soft threshold at k times the
++            // band's noise. At low noise a small fixed threshold takes
++            // grain out of flat areas and leaves low-contrast texture
++            // alone, which every local rule shrinks (session 12)
++            if(c == 0 && luma_k > 0.0f)
++            {
++              const float t = luma_k * sqrtf(sb2[0]);
++              const float soft = MAX(v - t, 0.0f) + MIN(v + t, 0.0f);
++              w = luma_w * w + (1.0f - luma_w) * soft;
++            }
++            out[4 * k + c] += w + pred;
 +            if(c == 0) yout = out[4 * k] - before;
 +            continue;
 +          }
@@ -444,7 +467,7 @@ index 784d46e509..426e5b1af1 100644
      synthesize(out, out, buf, thrs, boost, width, height);
  
      float *buf3 = buf2;
-@@ -1584,6 +1937,14 @@ static void process_wavelets(dt_iop_module_t *self,
+@@ -1584,6 +1960,14 @@ static void process_wavelets(dt_iop_module_t *self,
    for(size_t k = 0; k < 4U * npixels; k++)
      out[k] += buf1[k];
  
@@ -459,7 +482,7 @@ index 784d46e509..426e5b1af1 100644
    if(!d->use_new_vst)
    {
      backtransform(out, width, height, aa, bb);
-@@ -1599,6 +1960,9 @@ static void process_wavelets(dt_iop_module_t *self,
+@@ -1599,6 +1983,9 @@ static void process_wavelets(dt_iop_module_t *self,
                           p, d->b[1], d->bias - 0.5 * logf(in_scale), wb, toRGB_trans);
    }
  
@@ -469,7 +492,7 @@ index 784d46e509..426e5b1af1 100644
    dt_free_align(buf);
    dt_free_align(tmp);
    dt_free_align(precond);
-@@ -2603,6 +2967,9 @@ int process_cl(dt_iop_module_t *self,
+@@ -2603,6 +2990,9 @@ int process_cl(dt_iop_module_t *self,
    }
    else if(d->mode == MODE_WAVELETS || d->mode == MODE_WAVELETS_AUTO)
    {
@@ -479,7 +502,7 @@ index 784d46e509..426e5b1af1 100644
      return process_wavelets_cl(self, piece, dev_in, dev_out, roi_in, roi_out);
    }
    else
-@@ -3006,6 +3373,7 @@ void commit_params(dt_iop_module_t *self,
+@@ -3006,6 +3396,7 @@ void commit_params(dt_iop_module_t *self,
    d->wb_adaptive_anscombe = p->wb_adaptive_anscombe;
    d->fix_anscombe_and_nlmeans_norm = p->fix_anscombe_and_nlmeans_norm;
    d->use_new_vst = p->use_new_vst;

@@ -22,6 +22,8 @@ import concurrent.futures
 import json
 import math
 import os
+import re
+import struct
 import subprocess
 import sys
 import tempfile
@@ -84,6 +86,31 @@ VARIANTS['abl_global_s0.75'] = ('sw_bnw_s0.75', {
     'DT_DN_BANDNOISE': '1', 'DT_DN_BNONCE': '1'})
 VARIANTS['abl_global_s1.1'] = ('sw_bnw_s1.1', {
     'DT_DN_BANDNOISE': '1', 'DT_DN_BNONCE': '1'})
+# session 13: luma by a fixed soft threshold at k sigma (BNLUMAK), mixed
+# with the Wiener result at weight w (BNLUMAW); with the session 12 shape
+# cap. Chroma as before
+REL = {**NEW, 'DT_DN_BNSHAPE': SHAPE_REL, 'DT_DN_BNSHAPEREL': '1'}
+for _k in ('0.5', '1.0', '1.5'):
+    VARIANTS[f'soft{_k}_s1.0'] = ('sw_bnw_s1.0', {**REL, 'DT_DN_BNLUMAK': _k})
+VARIANTS['mix1.0_s1.0'] = ('sw_bnw_s1.0', {**REL, 'DT_DN_BNLUMAK': '1.0',
+                                          'DT_DN_BNLUMAW': '0.5'})
+VARIANTS['mix1.0_s1.1'] = ('sw_bnw_s1.1', {**REL, 'DT_DN_BNLUMAK': '1.0',
+                                          'DT_DN_BNLUMAW': '0.5'})
+# session 13 diagnostics: chroma detail kept; old mode's shadows and
+# chroma curve (wav_default) with measured noise
+VARIANTS['ckeep_s1.0'] = ('sw_bnw_s1.0', {**REL, 'DT_DN_BNCHROMAKEEP': '1'})
+VARIANTS['newdef_s1.0'] = ('wav_default', {**REL})
+for _f in ('bnwi', 'bnwc5', 'bnwic5'):
+    VARIANTS[f'{_f}_s1.0'] = (f'sw_{_f}_s1.0', REL)
+VARIANTS['bnwi_s0.9'] = ('sw_bnwi_s0.9', REL)
+VARIANTS['bnwi_s0.6'] = ('sw_bnwi_s0.6', REL)
+VARIANTS['bnwi_s0.75'] = ('sw_bnwi_s0.75', REL)
+VARIANTS['bnwi_s1.1'] = ('sw_bnwi_s1.1', REL)
+# HOLIDAY_TILES=1: render measured-noise variants as crops of the tiles
+# (render_tiles()), 4 small renders instead of a full frame. Does not match
+# full frames with DT_DN_BNLOCAL=8 (session 13): the coarse-scale windows
+# reach far beyond the margin. Kept for settings with small windows only
+TILE_RENDER = os.environ.get('HOLIDAY_TILES') == '1'
 # HOLIDAY_VARIANTS=a,b,...: render only these (plus what a new image needs)
 if os.environ.get('HOLIDAY_VARIANTS'):
     _keep = os.environ['HOLIDAY_VARIANTS'].split(',')
@@ -169,7 +196,8 @@ def pick_tiles(jpg):
 def cut(full, x, y, out):
     # one 16-bit tile; measuring on it instead of the full frame avoids
     # reloading a 120 MB PNG for every metric
-    run(['convert', full, '-crop', f'{TW}x{TH}+{x}+{y}', '+repage', out])
+    run(['convert', '-quiet', full, '-crop', f'{TW}x{TH}+{x}+{y}', '+repage',
+         out])
 
 
 def tile_metrics(path, kind):
@@ -179,6 +207,105 @@ def tile_metrics(path, kind):
         m['chroma'] = tradeoff.chroma_rms(path, geo)
         m['mottle'] = tradeoff.hp_rms(path, geo, '0x2', '0x16')
     return m
+
+
+MARGIN = 300  # around each tile in crop renders, as crop_xmp.py
+# full-frame renders as uncompressed 16-bit TIFF: faster to write and to
+# cut tiles from than 16-bit PNG, same pixels (session 13)
+TIFF16 = ('--conf', 'plugins/imageio/format/tiff/bpp=16',
+          '--conf', 'plugins/imageio/format/tiff/compress=0')
+BLEND = 'gz11eJxjYIAACQYYOOHEgAZY0QWAgBGLGANDgz0Ej1Q+dcF/IADRAGpyHQU='
+
+
+def pin_capture(s, radius, thrs):
+    # capture sharpening autotunes when its radius is 0, and on a crop it
+    # would tune to the crop: write the full frame's values into the
+    # demosaic entry (cs_radius and cs_thrs, bytes 24-31 of params v8)
+    li = re.search(r'<rdf:li\s[^>]*?darktable:operation="demosaic"[^>]*?/>',
+                   s, re.S).group(0)
+    p = re.search(r'params="([0-9a-f]+)"', li).group(1)
+    b = bytearray(bytes.fromhex(p))
+    b[24:32] = struct.pack('<2f', radius, thrs)
+    return s.replace(li, li.replace(p, b.hex()), 1)
+
+
+def crop_xmp(xmp, out, x, y, w, h, capture):
+    # the history plus a crop to the tile and MARGIN around it, in the
+    # oriented output's coordinates (crop runs after flip); returns the
+    # tile's offset in the cropped render
+    x0, y0 = max(x - MARGIN, 0), max(y - MARGIN, 0)
+    x1, y1 = min(x + TW + MARGIN, w), min(y + TH + MARGIN, h)
+    p = struct.pack('<4f2i', x0 / w, y0 / h, x1 / w, y1 / h, 0, 0).hex()
+    s = pin_capture(open(xmp).read(), *capture)
+    n = int(re.search(r'darktable:history_end="(\d+)"', s).group(1))
+    li = (f'     <rdf:li darktable:num="{n}" darktable:operation="crop"'
+          ' darktable:enabled="1"\n'
+          f'      darktable:modversion="3" darktable:params="{p}"'
+          ' darktable:multi_name="" darktable:multi_priority="0"\n'
+          f'      darktable:blendop_version="14"'
+          f' darktable:blendop_params="{BLEND}"/>\n')
+    end = '    </rdf:Seq>\n   </darktable:history>'
+    s = s.replace(end, li + end, 1).replace(
+        f'darktable:history_end="{n}"', f'darktable:history_end="{n + 1}"')
+    open(out, 'w').write(s)
+    return x - x0, y - y0
+
+
+def fixed_noise(raw, xmp, d, env):
+    # the full frame's band noise for this transform and despeck level, in
+    # the units DT_DN_BNFIXED takes (as logged, per-scale values divided by
+    # strength); with DT_DN_BNONCE the estimate does not depend on strength
+    key = os.path.basename(xmp).split('_s')[0] + '_ds' + env.get(
+        'DT_DN_DESPECK', '0')
+    cache = os.path.join(d, 'xmp', f'bnfixed_{key}.txt')
+    capfile = os.path.join(d, 'xmp', 'capture.txt')
+    if not os.path.exists(cache) or not os.path.exists(capfile):
+        e = {'DT_DN_BANDNOISE': '1', 'DT_DN_BNONCE': '1',
+             'DT_DN_BANDNOISE_LOG': '1'}
+        if 'DT_DN_DESPECK' in env:
+            e['DT_DN_DESPECK'] = env['DT_DN_DESPECK']
+        with tempfile.TemporaryDirectory() as cfg:
+            err = run([CLI, raw, xmp, os.path.join(cfg, 'x.png'),
+                       '--apply-custom-presets', 'false', '--core',
+                       '--configdir', cfg, '--library', ':memory:',
+                       '-d', 'pipe'], e)
+            err = err.stderr + err.stdout
+        s = float(re.search(r'_s([0-9.]+)\.xmp$', xmp).group(1))
+        v = list(re.search(r'scale-0 noise (\S+) (\S+) (\S+),',
+                           err).groups())
+        for m in re.finditer(r'scale \d+ noise x strength (\S+) (\S+) (\S+)',
+                             err):
+            v += [str(float(t) / s) for t in m.groups()]
+        open(cache, 'w').write(' '.join(v[:24]))
+        m = re.search(r'autotuned capture.*threshold=(\S+) radius=(\S+)', err)
+        open(capfile, 'w').write(f'{m.group(2)} {m.group(1)}')
+    radius, thrs = map(float, open(capfile).read().split())
+    return open(cache).read(), (radius, thrs)
+
+
+def render_tiles(raw, xmp, d, v, env, tiles, size):
+    # measured-noise variants: render only the tiles, with the full frame's
+    # band noise passed in so that they match a full-frame render
+    if 'DT_DN_BANDNOISE' not in env:
+        return False
+    fixed, capture = fixed_noise(raw, xmp, d, env)
+    env = dict(env, DT_DN_BNFIXED=fixed)
+    w, h = size
+
+    def one(t):
+        x, y = tiles[t]
+        cx = os.path.join(d, 'xmp', f'crop_{v}_{t}.xmp')
+        ox, oy = crop_xmp(xmp, cx, x, y, w, h, capture)
+        tmp = os.path.join(d, f'crop_{v}_{t}.png')
+        render(raw, cx, tmp, env,
+               core=('--conf', 'plugins/imageio/format/png/bpp=16'))
+        cut(tmp, ox, oy, os.path.join(d, f'{v}_{t}.png'))
+        os.remove(tmp)
+        os.remove(cx)
+
+    with concurrent.futures.ThreadPoolExecutor(4) as ex:
+        list(ex.map(one, tiles))
+    return True
 
 
 def add_variants(src, d, name):
@@ -192,17 +319,22 @@ def add_variants(src, d, name):
     base = os.path.join(d, 'xmp', 'base.xmp')
     run(['python3', os.path.join(HERE, 'variants_xmp.py'), base,
          str(green_a(result['iso'])), os.path.join(d, 'xmp')])
+    size = result.get('size') or [int(t) for t in run(
+        ['identify', '-format', '%w %h', '-auto-orient',
+         os.path.join(src, name + '.JPG')]).stdout.split()[:2]]
     for v in missing:
         entry, env = VARIANTS[v]
-        full = os.path.join(d, f'{v}.png')
-        render(raw, os.path.join(d, 'xmp', entry + '.xmp'), full, env,
-               core=('--conf', 'plugins/imageio/format/png/bpp=16'))
-        for t, (x, y) in result['tiles'].items():
-            tile = os.path.join(d, f'{v}_{t}.png')
-            cut(full, x, y, tile)
+        xmp = os.path.join(d, 'xmp', entry + '.xmp')
+        if not (TILE_RENDER and render_tiles(raw, xmp, d, v, env,
+                                             result['tiles'], size)):
+            full = os.path.join(d, f'{v}.tif')
+            render(raw, xmp, full, env, core=TIFF16)
+            for t, (x, y) in result['tiles'].items():
+                cut(full, x, y, os.path.join(d, f'{v}_{t}.png'))
+            os.remove(full)
+        for t in result['tiles']:
             result['metrics'].setdefault(v, {})[t] = tile_metrics(
-                tile, t.split('_')[0])
-        os.remove(full)
+                os.path.join(d, f'{v}_{t}.png'), t.split('_')[0])
     make_montage(d, result['tiles'], list(result['metrics']))
     json.dump(result, open(os.path.join(d, 'metrics.json'), 'w'), indent=1)
     return name, 'added ' + ' '.join(missing)
@@ -263,9 +395,9 @@ def process(src, work, name):
         result['metrics'].setdefault('jpeg', {})[t] = tile_metrics(
             tile, t.split('_')[0])
     for v, (entry, env) in VARIANTS.items():
-        full = os.path.join(d, f'{v}.png')
+        full = os.path.join(d, f'{v}.tif')
         render(raw, os.path.join(d, 'xmp', entry + '.xmp'), full, env,
-               core=('--conf', 'plugins/imageio/format/png/bpp=16'))
+               core=TIFF16)
         for t, (x, y) in tiles.items():
             tile = os.path.join(d, f'{v}_{t}.png')
             cut(full, x, y, tile)

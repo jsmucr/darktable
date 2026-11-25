@@ -105,6 +105,15 @@ for s in (0.6, 0.75, 0.9, 1.0, 1.1, 1.15, 1.2, 1.25, 1.3, 1.5, 2.0):
     # session 10: one transform exponent for all channels
     VARIANTS[f'sw_bnw_s{s}'] = [('denoiseprofile', 12, denoiseprofile(
         strength=s, chroma=1.0, shadows=0.5, wbadapt=0))]
+    # session 13: the same with "preserve shadows" inferred from the
+    # profile, as darktable sets it (i), and with the chroma curve flat
+    # (c5)
+    VARIANTS[f'sw_bnwi_s{s}'] = [('denoiseprofile', 12, denoiseprofile(
+        strength=s, chroma=1.0, wbadapt=0))]
+    VARIANTS[f'sw_bnwc5_s{s}'] = [('denoiseprofile', 12, denoiseprofile(
+        strength=s, shadows=0.5, wbadapt=0))]
+    VARIANTS[f'sw_bnwic5_s{s}'] = [('denoiseprofile', 12, denoiseprofile(
+        strength=s, wbadapt=0))]
 
 x = open(template).read()
 end = '    </rdf:Seq>\n   </darktable:history>'

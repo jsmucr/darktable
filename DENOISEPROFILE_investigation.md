@@ -99,6 +99,12 @@ in-camera noise reduction at its default (0).
   mode's small soft threshold leaves it untouched. So below about ISO 400
   the new mode should do less than old mode, and a real mode needs a
   noise-dependent strength or rule.
+- **Most of the remaining gap was "preserve shadows" 0.5**, used since
+  session 4 (session 13). With darktable's value inferred from the
+  profile, flat areas are far cleaner for the same texture at every ISO;
+  at ISO 6400+ the new mode beats the JPEG on flat-area noise and fine
+  texture, at ISO 200 it is 4 points of texture behind old mode instead
+  of 5-9. A gentler luma rule (soft threshold) did not help.
 
 ## Samples
 
@@ -164,6 +170,8 @@ plus ImageMagick and the built `darktable-cli`:
   variants at 16 bit, prints `tradeoff.py` for all of them, the per-scale
   estimates and thresholds, and the wall's own band noise, and restores the
   source on exit. Leaves about 3.3 GB of renders in its work directory.
+- `holiday_cmp.py` compares holiday.py variants by spatial band, flat
+  against textured tiles (session 13).
 - `shape_log.py` logs the per-scale noise estimates on holiday.py's
   images; `holiday_bands.py` splits their tiles' lightness into spatial
   bands (session 12). `shape_g9_cs.json` and `shape_g9_nocs.json` hold
@@ -172,7 +180,7 @@ plus ImageMagick and the built `darktable-cli`:
   automatically, exposure matched by bisection, old mode, new mode at
   several strengths and named variants (session 11); `holiday_summary.py`
   reports by ISO band.
-- `bandnoise.patch`: the session 6-12 experiments (`DT_DN_BANDNOISE=1`
+- `bandnoise.patch`: the session 6-13 experiments (`DT_DN_BANDNOISE=1`
   and the variant switches listed there); bit-identical output when off. It
   carries its own copy of the detail-band dump, so do not stack
   `instrumentation.patch` on it.
@@ -1030,6 +1038,80 @@ less than old mode, not more, and the strength that matches the JPEG
 rises with ISO. A real mode would need an ISO- or noise-dependent
 strength, or a gentler rule (a small fixed soft threshold) where the
 noise is low. Not tried.
+
+## Session 13: "preserve shadows" 0.5 was the hidden cost
+
+Subset: the 10 ISO 200 and 10 ISO 640-1000 images of session 11 plus the
+4 above ISO 6400. `holiday_cmp.py` prints, per variant, Lab L energy in
+the fine (0-1 px) and mid (1-3 px) bands on flat | textured tiles,
+relative to no denoise, plus flat-tile specks and chroma.
+
+**A gentler luma rule does not help.** `DT_DN_BNLUMAK=k` replaces the
+luma Wiener step with a soft threshold at k times the band noise
+(`DT_DN_BNLUMAW=w` mixes the two). At ISO 200, k 0.5 gives flat 0.69 |
+texture 0.90 in the fine band, the same trade as Wiener at 0.75 (0.70 |
+0.91); larger k is worse on both. Old mode has 0.67 | 0.99.
+
+**What does help: darktable's inferred "preserve shadows"** instead of
+the 0.5 used since session 4. The new mode's sessions 6-12 all ran with
+shadows 0.5 (chosen then to reduce old mode's specks). darktable infers
+it from the profile (`infer_shadows_from_profile`, 1.34 at ISO 200, 0.94
+at ISO 20000 for the G9). Same everything else (one exponent, r 8,
+Wiener luma, leave-block-out 1, despeck 2, guide, shape cap), `bnwi` in
+`variants_xmp.py`:
+
+| ISO | variant | fine flat \| tex | mid flat \| tex | specks | chroma |
+|---|---|---|---|---|---|
+| 200 | old | 0.67 \| 0.99 | 0.55 \| 0.99 | 0 | 0.43 |
+| | shadows 0.5, 1.1 | 0.53 \| 0.85 | 0.51 \| 0.90 | 0 | 0.45 |
+| | inferred, 0.6 | 0.60 \| 0.95 | 0.59 \| 0.98 | 0 | 0.46 |
+| | inferred, 1.0 | 0.11 \| 0.93 | 0.24 \| 0.97 | 0 | 0.42 |
+| 640-1000 | old | 0.71 \| 0.88 | 0.52 \| 0.95 | 20 | 0.31 |
+| | shadows 0.5, 1.1 | 0.29 \| 0.38 | 0.27 \| 0.84 | 0 | 0.26 |
+| | inferred, 0.75 | 0.44 \| 0.67 | 0.38 \| 0.91 | 0 | 0.27 |
+| | inferred, 1.0 | 0.10 \| 0.50 | 0.08 \| 0.87 | 0 | 0.25 |
+| | JPEG | 0.32 \| 0.68 | 0.48 \| 1.13 | 0 | 0.47 |
+| 6400+ | old | 0.78 \| 0.88 | 0.60 \| 0.87 | 8441 | 1.67 |
+| | shadows 0.5, 1.1 | 0.19 \| 0.24 | 0.22 \| 0.60 | 51 | 0.90 |
+| | inferred, 1.0 | 0.13 \| 0.43 | 0.11 \| 0.70 | 144 | 0.94 |
+| | inferred, 1.1 | 0.06 \| 0.32 | 0.07 \| 0.65 | 29 | 0.92 |
+| | JPEG | 0.21 \| 0.28 | 0.28 \| 0.74 | 166 | 1.39 |
+
+- With the inferred value, flat areas get much cleaner for the same
+  texture at every ISO: at ISO 200 and strength 1.0 the fine-band noise
+  left in flat areas falls from 0.53 to 0.11 while texture keeps 0.93,
+  and at ISO 6400+ the new mode keeps more fine texture than the JPEG
+  (0.43 against 0.28) with less noise in flat areas (0.13 against 0.21).
+- Most likely reason, not measured directly: with a transform exponent
+  too far from the noise model, the transformed noise is not uniform
+  across brightness, and a single measured level per band is wrong in
+  darker or brighter parts. Specks, the reason for 0.5 in session 4, are
+  now handled by despeck and Wiener (144 at strength 1.0, 29 at 1.1,
+  against the JPEG's 166).
+- ISO 200 is still the one band where old mode keeps the most texture
+  at its flat-area noise (0.99 against 0.95 at strength 0.6), but the
+  gap is down from 5-9 points to 4, and at strength 1.0 the new mode
+  trades 6 points of texture for flat areas 6x cleaner.
+- Visually (montage of 5 images, not kept): at ISO 25600 the inferred
+  setting keeps more of the color in leaves and grass than shadows 0.5,
+  so it explains part of session 11's color loss, but leaves fine dark
+  grain in dark textured areas at strength 0.75-1.0. P1378616's feathers
+  at 1.0 are closer to the JPEG than with shadows 0.5. The textured-tile
+  fine band at high ISO still holds some leftover noise, so 0.43 against
+  the JPEG's 0.28 overstates the texture kept. ISO 200 and 800 look alike in all
+  variants at 100%.
+
+Also changed: `holiday.py` writes full renders as uncompressed 16-bit
+TIFF (same pixels, 14.4 s to 11.8 s per render and 1.2 s to 0.2 s per
+tile cut). It can render measured-noise variants as crops of the tiles
+with the full frame's noise passed in (`HOLIDAY_TILES=1`), but with r 8
+those do not match full frames (coarse-scale windows reach past the 300
+px margin), so it is off.
+
+Strength for this setting, matching old mode's flat-area noise or the
+JPEG's: about 0.6 at ISO 200, 0.75 at 640-1000, 1.0 at 6400 and up.
+That still rises with ISO, less steeply than before; whether it should
+be automatic is open.
 
 ## Round 1 TODOs
 
