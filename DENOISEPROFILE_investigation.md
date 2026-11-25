@@ -105,6 +105,12 @@ in-camera noise reduction at its default (0).
   at ISO 6400+ the new mode beats the JPEG on flat-area noise and fine
   texture, at ISO 200 it is 4 points of texture behind old mode instead
   of 5-9. A gentler luma rule (soft threshold) did not help.
+- **In the user's own workflow the new mode loses to both learned
+  denoisers** (session 14): at the same flat-area noise, darktable's raw
+  neural denoise keeps more mid-scale texture at every ISO and Topaz
+  more still at high ISO. The new mode also leaves colored specks in
+  dark textured areas, cause not found yet. It still beats old mode and
+  the user's chroma-only preset at high ISO.
 
 ## Samples
 
@@ -170,6 +176,10 @@ plus ImageMagick and the built `darktable-cli`:
   variants at 16 bit, prints `tradeoff.py` for all of them, the per-scale
   estimates and thresholds, and the wall's own band noise, and restores the
   source on exit. Leaves about 3.3 GB of renders in its work directory.
+- `workflow.py` renders the user's own histories with denoise off and
+  with the new mode in place of their denoise entry, and compares them
+  with their default, neural and Topaz exports by spatial band (session
+  14).
 - `holiday_cmp.py` compares holiday.py variants by spatial band, flat
   against textured tiles (session 13).
 - `shape_log.py` logs the per-scale noise estimates on holiday.py's
@@ -1112,6 +1122,82 @@ Strength for this setting, matching old mode's flat-area noise or the
 JPEG's: about 0.6 at ISO 200, 0.75 at 640-1000, 1.0 at 6400 and up.
 That still rises with ISO, less steeply than before; whether it should
 be automatic is open.
+
+## Session 14: the user's own workflow, raw neural denoise and Topaz
+
+Five images in `C:\temp\denoise\workflow` (`GUIDE.txt` there), each as
+the user's default render (their history: color balance rgb with
+saturation +0.2, shadows +0.25; demosaic LMMSE with capture sharpening
+radius 0.87; denoise (profiled) "Denoise chroma", wavelets Y0U0V0 at
+strength 1.2 with the luma curve at 0, so chroma only), with darktable's
+raw neural denoise at 25, 50 and 75 instead, and for the three high-ISO
+ones Topaz DeNoise AI 3.7.1 on the default export (P1378607 Low Light,
+sharpness 20, recover detail 21; P1378610 and P1378616 Severe Noise,
+sharpness 100). The user's notes: at ISO 200 and 800 nothing on top of
+the chroma-only preset was worth it in Topaz; a little luma grain looks
+crisper. Their darktable is their own branch (`master-plus-my-fixes`).
+
+`workflow.py` renders, from the user's own XMP with this build: their
+history unchanged (a check), with denoise (profiled) off, and with it
+replaced by the session 13 setting at two strengths per ISO. Tiles are
+chosen as in `holiday.py`. My render of their default differs from their
+export by an RMSE of 5.5%, mostly a large ring pattern over the frame
+(lens correction or vignetting in their branch, not examined); Lab L in
+the fine and mid bands matches within 1%, chroma does not (2.78 against
+3.35 on P1378616's flat tiles), so comparisons below use L only and are
+relative to my "denoise off" render.
+
+Lab L energy relative to no denoise, flat | textured tiles:
+
+| image | version | fine flat \| tex | mid flat \| tex | flat specks |
+|---|---|---|---|---|
+| P1378395 ISO 200 | their default | 1.00 \| 1.01 | 1.00 \| 1.00 | 19510 |
+| | neural 50 | 0.69 \| 0.75 | 0.98 \| 0.98 | 9487 |
+| | new 0.75 | 0.88 \| 0.88 | 0.94 \| 0.96 | 15142 |
+| P1378550 ISO 800 | neural 50 | 0.64 \| 0.68 | 0.93 \| 0.97 | 3832 |
+| | new 0.9 | 0.63 \| 0.70 | 0.83 \| 0.90 | 3528 |
+| P1378607 ISO 6400 | neural 50 | 0.37 \| 0.56 | 0.43 \| 0.80 | 0 |
+| | neural 75 | 0.14 \| 0.28 | 0.22 \| 0.70 | 0 |
+| | Topaz | 0.27 \| 0.46 | 0.33 \| 0.79 | 0 |
+| | new 0.9 | 0.36 \| 0.41 | 0.35 \| 0.69 | 0 |
+| P1378610 ISO 25600 | neural 75 | 0.18 \| 0.30 | 0.28 \| 0.75 | 2592 |
+| | Topaz | 0.12 \| 0.28 | 0.25 \| 0.80 | 340 |
+| | new 1.0 | 0.11 \| 0.19 | 0.18 \| 0.56 | 1428 |
+| P1378616 ISO 20000 | neural 75 | 0.15 \| 0.32 | 0.18 \| 0.82 | 38 |
+| | Topaz | 0.11 \| 0.31 | 0.08 \| 0.93 | 0 |
+| | new 1.0 | 0.14 \| 0.22 | 0.14 \| 0.65 | 244 |
+
+(The speck count is high at low ISO because it counts fine texture and
+grain.)
+
+- **At the same flat-area noise, the neural denoise keeps more mid-band
+  texture than the new mode at every ISO** (P1378550: 0.97 against 0.90
+  with the same fine-band noise; P1378616: 0.82 against 0.65), and
+  Topaz more still at high ISO (0.93 on P1378616, with sharpening 100).
+  The new mode is last of the three denoisers on this measure in the
+  user's workflow.
+- Visually (2x crops of the textured tiles, not kept): Topaz is the
+  cleanest and crispest, with strong edges and local contrast, and on
+  P1378607 bark it draws brush-stroke-like texture that is not in the
+  raw. Neural 75 is clean and soft, colors kept. **The new mode leaves
+  fine grain and magenta/green colored specks in dark textured areas**,
+  amplified here by the user's +0.25 shadow saturation. At ISO 200 and
+  800 all versions look alike at 100%, as the user found.
+- The colored specks are not the chroma guide (gone with `BNCGUIDE`
+  off: unchanged), not luma-only Wiener (Wiener on all channels:
+  unchanged) and not the inferred "preserve shadows" (0.5 instead:
+  worse). Not found yet.
+
+So, against the two learned denoisers in the user's own workflow, the
+measured-noise mode does not win at any ISO. It does beat old mode
+(sessions 11-13) and the user's chroma-only preset at high ISO. The
+user's verdict that neural restore is "nothing like Topaz" is borne out
+on detail; on these numbers neural 75 is closer to Topaz than the new
+mode is.
+
+Renders and montages: `C:\temp\denoise\compare\workflow\` (tile
+montages, 2x crops, the new mode at strength 1.0 for the three high-ISO
+images); full renders in `/tmp/wf/run` (2.4 GB).
 
 ## Round 1 TODOs
 
