@@ -696,7 +696,15 @@ white balance, no color calibration), and raise exposure from 0.7 to
 2.9 EV, which matches the JPEG's mean on the wall (G 0.501 against 0.497)
 and the bird (0.509 against 0.482). The white balance coefficients are
 the same as the template's (2.414, 1, 1.828, the camera's Cloudy), so the
-data denoise (profiled) sees does not change. New mode: Wiener luma, r 8,
+data denoise (profiled) sees does not change. (Checked after session 10:
+the default white balance is "as shot" with "prepare data for color
+calibration" on, `temperature.c:1729-1731`. With no color calibration
+in the history, input color profile then rescales to the camera
+reference coefficients (2.511, 1, 1.663; `colorin.c:910`, `-d pipe`
+prints it), so the final color is camera reference, not as shot. Plain
+as shot differs on the wall by 1 in L and 0.2 in a and b. Denoise
+(profiled) runs before input color profile and sees the as-shot data
+either way.) New mode: Wiener luma, r 8,
 leave-block-out 1, despeck 2, strength 1.1. Old mode: strength 3, chroma
 0.8, shadows 0.5.
 
