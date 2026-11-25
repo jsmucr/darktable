@@ -1,5 +1,5 @@
 diff --git a/src/iop/denoiseprofile.c b/src/iop/denoiseprofile.c
-index 784d46e509..d09a1a006e 100644
+index 784d46e509..426e5b1af1 100644
 --- a/src/iop/denoiseprofile.c
 +++ b/src/iop/denoiseprofile.c
 @@ -24,6 +24,8 @@
@@ -176,7 +176,7 @@ index 784d46e509..d09a1a006e 100644
  }
  
  static void process_wavelets(dt_iop_module_t *self,
-@@ -1552,9 +1659,103 @@ static void process_wavelets(dt_iop_module_t *self,
+@@ -1552,12 +1659,107 @@ static void process_wavelets(dt_iop_module_t *self,
  
    debug_dump_PFM(piece, "transformed", precond, width, height, 0);
  
@@ -280,7 +280,11 @@ index 784d46e509..d09a1a006e 100644
    // clear the output buffer, which will be accumulating all of the detail scales
    dt_iop_image_fill(out, 0.0f, width, height, 4);
  
-@@ -1571,7 +1772,152 @@ static void process_wavelets(dt_iop_module_t *self,
++  dt_aligned_pixel_t shape_ref = { 1.0f, 1.0f, 1.0f, 1.0f };
+   for(int scale = 0; scale < max_scale; scale++)
+   {
+     const float sigma = 1.0f;
+@@ -1571,7 +1773,158 @@ static void process_wavelets(dt_iop_module_t *self,
  
      const dt_aligned_pixel_t boost = { 1.0f, 1.0f, 1.0f, 1.0f };
      dt_aligned_pixel_t thrs;
@@ -301,10 +305,16 @@ index 784d46e509..d09a1a006e 100644
 +      {
 +        gchar **v = g_strsplit_set(g_getenv("DT_DN_BNSHAPE"), " ,", -1);
 +        const gboolean set = !g_strcmp0(g_getenv("DT_DN_BNSHAPEMODE"), "set");
++        // DT_DN_BNSHAPEREL=1: the shape is relative to scale 0, and scales
++        // with this image's own scale-0 estimate (and so with strength)
++        const gboolean rel = g_getenv("DT_DN_BNSHAPEREL") != NULL;
++        if(scale == 0)
++          for(int c = 0; c < 3; c++) shape_ref[c] = band_sigma[c];
 +        if(g_strv_length(v) >= (guint)(3 * scale + 3))
 +          for(int c = 0; c < 3; c++)
 +          {
-+            const float shape = g_ascii_strtod(v[3 * scale + c], NULL);
++            float shape = g_ascii_strtod(v[3 * scale + c], NULL);
++            if(rel) shape *= shape_ref[c] / g_ascii_strtod(v[c], NULL);
 +            band_sigma[c] = set ? shape : fminf(band_sigma[c], shape);
 +          }
 +        g_strfreev(v);
@@ -434,7 +444,7 @@ index 784d46e509..d09a1a006e 100644
      synthesize(out, out, buf, thrs, boost, width, height);
  
      float *buf3 = buf2;
-@@ -1584,6 +1930,14 @@ static void process_wavelets(dt_iop_module_t *self,
+@@ -1584,6 +1937,14 @@ static void process_wavelets(dt_iop_module_t *self,
    for(size_t k = 0; k < 4U * npixels; k++)
      out[k] += buf1[k];
  
@@ -449,7 +459,7 @@ index 784d46e509..d09a1a006e 100644
    if(!d->use_new_vst)
    {
      backtransform(out, width, height, aa, bb);
-@@ -1599,6 +1953,9 @@ static void process_wavelets(dt_iop_module_t *self,
+@@ -1599,6 +1960,9 @@ static void process_wavelets(dt_iop_module_t *self,
                           p, d->b[1], d->bias - 0.5 * logf(in_scale), wb, toRGB_trans);
    }
  
@@ -459,7 +469,7 @@ index 784d46e509..d09a1a006e 100644
    dt_free_align(buf);
    dt_free_align(tmp);
    dt_free_align(precond);
-@@ -2603,6 +2960,9 @@ int process_cl(dt_iop_module_t *self,
+@@ -2603,6 +2967,9 @@ int process_cl(dt_iop_module_t *self,
    }
    else if(d->mode == MODE_WAVELETS || d->mode == MODE_WAVELETS_AUTO)
    {
@@ -469,7 +479,7 @@ index 784d46e509..d09a1a006e 100644
      return process_wavelets_cl(self, piece, dev_in, dev_out, roi_in, roi_out);
    }
    else
-@@ -3006,6 +3366,7 @@ void commit_params(dt_iop_module_t *self,
+@@ -3006,6 +3373,7 @@ void commit_params(dt_iop_module_t *self,
    d->wb_adaptive_anscombe = p->wb_adaptive_anscombe;
    d->fix_anscombe_and_nlmeans_norm = p->fix_anscombe_and_nlmeans_norm;
    d->use_new_vst = p->use_new_vst;

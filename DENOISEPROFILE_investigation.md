@@ -90,10 +90,15 @@ in-camera noise reduction at its default (0).
   mode at its defaults keeps 99% at the same noise. At ISO 250-1000 it
   removes much more noise and all specks for 5-10% less texture; at ISO
   6400 and up it removes the specks and leaves flat areas cleaner than
-  the JPEG. At ISO 25600 it washes out color in texture. The low-ISO
-  texture loss comes from the noise estimate, which counts faint
-  structure as noise; capping it at the noise's high-ISO shape recovers
-  most of it.
+  the JPEG. At ISO 25600 it washes out color in texture.
+- **The noise's per-scale shape is the same on every image from ISO 640
+  up, with or without capture sharpening** (session 12); at ISO 200 the
+  estimate counts structure as noise. Capping it at that shape helps only
+  a little. The bigger cause of the ISO 200 texture loss is the local
+  shrinkage itself, which at low noise attenuates most texture, where old
+  mode's small soft threshold leaves it untouched. So below about ISO 400
+  the new mode should do less than old mode, and a real mode needs a
+  noise-dependent strength or rule.
 
 ## Samples
 
@@ -159,11 +164,15 @@ plus ImageMagick and the built `darktable-cli`:
   variants at 16 bit, prints `tradeoff.py` for all of them, the per-scale
   estimates and thresholds, and the wall's own band noise, and restores the
   source on exit. Leaves about 3.3 GB of renders in its work directory.
+- `shape_log.py` logs the per-scale noise estimates on holiday.py's
+  images; `holiday_bands.py` splits their tiles' lightness into spatial
+  bands (session 12). `shape_g9_cs.json` and `shape_g9_nocs.json` hold
+  the logged estimates, with and without capture sharpening.
 - `holiday.py` runs a set of raws with their camera JPEGs: tiles chosen
   automatically, exposure matched by bisection, old mode, new mode at
   several strengths and named variants (session 11); `holiday_summary.py`
   reports by ISO band.
-- `bandnoise.patch`: the session 6-11 experiments (`DT_DN_BANDNOISE=1`
+- `bandnoise.patch`: the session 6-12 experiments (`DT_DN_BANDNOISE=1`
   and the variant switches listed there); bit-identical output when off. It
   carries its own copy of the detail-band dump, so do not stack
   `instrumentation.patch` on it.
@@ -939,6 +948,88 @@ color loss at very high ISO is unexplored. OpenCL, other cameras.
 Montages for 8 images, the 2x texture crops and the per-image table are
 in `C:\temp\denoise\compare\holiday\`. The renders are in
 `/tmp/hol/run` (1.3 GB, tiles only).
+
+## Session 12: the noise shape is fixed, the low-ISO loss is elsewhere
+
+`shape_log.py` logs the per-scale noise estimates on every image, relative
+to scale 0, with capture sharpening on and (28 images) off:
+
+- **ISO 640 and up (22 images): one shape.** Scale-1 luma 0.379 of scale
+  0, scale 2 0.187, scale 3 0.099 (chroma 0.72-0.76, 0.46-0.49,
+  0.25-0.27), the 10%-90% range within a few percent at scales 1-2.
+  Capture sharpening does not change it (identical to three decimals),
+  nor does the image. ISO 6400+ adds noise at scales 4-6 that the others
+  do not have, possibly low-frequency (pattern) noise; four images only.
+- **ISO 200: scale-1 luma 0.57 median, 0.44-0.74 across images**, scale
+  3 0.25. The estimate there includes image structure, as session 11
+  suspected.
+
+`DT_DN_BNSHAPEREL=1` makes `DT_DN_BNSHAPE` relative: each scale is capped
+at the median shape above times this image's own scale-0 estimate, so it
+needs no absolute level. On all 79 images, strength 0.9:
+
+| ISO | | new 0.9 | shape cap 0.9 | old default |
+|---|---|---|---|---|
+| 200 | noise | 0.0040 | 0.0043 | 0.0042 |
+| | detail | 0.93 | 0.95 | 0.99 |
+| 250-500 | noise | 0.0083 | 0.0095 | 0.0143 |
+| | detail | 0.93 | 0.93 | 0.98 |
+| 640-1000 | | unchanged | | |
+
+So the cap is right but small: at ISO 200 it trades a little noise for
+two points of detail, and the new mode is still behind old mode.
+
+What else was tried at ISO 200 (10 images, strength 0.75, old mode at
+noise 0.0037, detail 0.987):
+
+| variant | noise | detail |
+|---|---|---|
+| session 10 setting | 0.0039 | 0.945 |
+| per-channel exponents | 0.0038 | 0.955 |
+| no guide | 0.0039 | 0.939 |
+| window r 4 | 0.0038 | 0.945 |
+| no local thresholds (session 6 global BayesShrink) | 0.0044 | 0.949 |
+
+None closes the gap, and session 11 already ruled out despeck and Wiener.
+
+Where the texture goes (`holiday_bands.py`: Lab L energy per spatial
+band, relative to no denoise, flat tiles | textured tiles):
+
+| ISO | variant | fine 0-1 px | mid 1-3 px | coarse 3-8 px |
+|---|---|---|---|---|
+| 200 | old | 0.68 \| 1.00 | 0.62 \| 0.99 | 0.89 \| 1.00 |
+| | new 0.75 | 0.69 \| 0.93 | 0.72 \| 0.94 | 0.87 \| 0.98 |
+| | JPEG | 1.02 \| 1.24 | 0.94 \| 1.32 | 1.02 \| 1.21 |
+| 250-500 | old | 0.71 \| 0.97 | 0.54 \| 0.98 | 0.63 \| 1.00 |
+| | new 1.1 | 0.32 \| 0.69 | 0.24 \| 0.90 | 0.26 \| 0.97 |
+| 640-1000 | old | 0.72 \| 0.88 | 0.53 \| 0.95 | 0.50 \| 0.99 |
+| | new 1.1 | 0.33 \| 0.40 | 0.30 \| 0.86 | 0.37 \| 0.96 |
+| | JPEG | 0.32 \| 0.68 | 0.49 \| 1.14 | 0.76 \| 1.15 |
+| 6400+ | old | 0.78 \| 0.88 | 0.60 \| 0.87 | 0.69 \| 1.00 |
+| | new 1.1 | 0.19 \| 0.24 | 0.22 \| 0.60 | 0.43 \| 0.85 |
+| | JPEG | 0.21 \| 0.28 | 0.28 \| 0.74 | 0.60 \| 1.05 |
+
+- **At ISO 200 old mode is the better design**: it takes the same share
+  of the fine noise out of flat areas as the new mode and leaves texture
+  untouched in every band. Its fine-scale luma threshold is a small
+  fraction of the noise (session 5's misnormalization), and a small soft
+  threshold barely touches coefficients well above it. The new mode's
+  local rules (Wiener or soft, any window) shrink texture whose fine-band
+  energy is only a few times the noise, which at ISO 200 is most
+  texture.
+- **The camera does no fine-scale noise reduction at ISO 200** (flat fine
+  band 1.02); from ISO 640 it removes about as much fine noise as the new
+  mode at 1.1 (0.32-0.33 against 0.33) and keeps more mid-band texture.
+- At ISO 640-1000 the new mode's textured tiles lose 60% of the fine band,
+  the JPEG's 32%. Many of these tiles are out-of-focus (session 11), so
+  part of that is noise; the mid band (0.86 against 1.14 for the
+  sharpened JPEG) is the safer comparison.
+
+Conclusion for the defaults: below about ISO 400 the new mode should do
+less than old mode, not more, and the strength that matches the JPEG
+rises with ISO. A real mode would need an ISO- or noise-dependent
+strength, or a gentler rule (a small fixed soft threshold) where the
+noise is low. Not tried.
 
 ## Round 1 TODOs
 

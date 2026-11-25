@@ -64,6 +64,26 @@ VARIANTS['shmin_s0.9'] = ('sw_bnw_s0.9', {**NEW, 'DT_DN_BNSHAPE': SHAPE})
 VARIANTS['shmin_s1.1'] = ('sw_bnw_s1.1', {**NEW, 'DT_DN_BNSHAPE': SHAPE})
 VARIANTS['shset_s1.1'] = ('sw_bnw_s1.1', {**NEW, 'DT_DN_BNSHAPE': SHAPE,
                                           'DT_DN_BNSHAPEMODE': 'set'})
+# session 12: the median shape of the 22 images at ISO 640 and up
+# (shape_log.py), relative to scale 0 and scaled by each image's own
+# scale-0 estimate; a cap on the per-scale estimates
+SHAPE_REL = ('1.0000 1.0000 1.0000 0.3792 0.7196 0.7573 0.1866 0.4557 '
+             '0.4906 0.0990 0.2518 0.2716 0.0568 0.1310 0.1411 0.0577 '
+             '0.0650 0.0678 0.0519 0.0385 0.0300')
+for _s in ('0.9', '1.1', '1.2'):
+    VARIANTS[f'rel_s{_s}'] = (f'sw_bnw_s{_s}', {
+        **NEW, 'DT_DN_BNSHAPE': SHAPE_REL, 'DT_DN_BNSHAPEREL': '1'})
+# session 12 ablation at strength 0.75, ISO 200: per-channel exponents,
+# no guide, window r 4, no local thresholds at all (session 6 BayesShrink
+# with measured noise)
+VARIANTS['abl_bn_s0.75'] = ('sw_bn_s0.75', NEW)
+VARIANTS['abl_noguide_s0.75'] = ('sw_bnw_s0.75', {
+    k: v for k, v in NEW.items() if k != 'DT_DN_BNCGUIDE'})
+VARIANTS['abl_r4_s0.75'] = ('sw_bnw_s0.75', {**NEW, 'DT_DN_BNLOCAL': '4'})
+VARIANTS['abl_global_s0.75'] = ('sw_bnw_s0.75', {
+    'DT_DN_BANDNOISE': '1', 'DT_DN_BNONCE': '1'})
+VARIANTS['abl_global_s1.1'] = ('sw_bnw_s1.1', {
+    'DT_DN_BANDNOISE': '1', 'DT_DN_BNONCE': '1'})
 # HOLIDAY_VARIANTS=a,b,...: render only these (plus what a new image needs)
 if os.environ.get('HOLIDAY_VARIANTS'):
     _keep = os.environ['HOLIDAY_VARIANTS'].split(',')
