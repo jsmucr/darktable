@@ -1,5 +1,5 @@
 diff --git a/src/iop/denoiseprofile.c b/src/iop/denoiseprofile.c
-index 784d46e509..74d691ec1f 100644
+index 784d46e509..d09a1a006e 100644
 --- a/src/iop/denoiseprofile.c
 +++ b/src/iop/denoiseprofile.c
 @@ -24,6 +24,8 @@
@@ -280,7 +280,7 @@ index 784d46e509..74d691ec1f 100644
    // clear the output buffer, which will be accumulating all of the detail scales
    dt_iop_image_fill(out, 0.0f, width, height, 4);
  
-@@ -1571,7 +1772,134 @@ static void process_wavelets(dt_iop_module_t *self,
+@@ -1571,7 +1772,152 @@ static void process_wavelets(dt_iop_module_t *self,
  
      const dt_aligned_pixel_t boost = { 1.0f, 1.0f, 1.0f, 1.0f };
      dt_aligned_pixel_t thrs;
@@ -291,6 +291,24 @@ index 784d46e509..74d691ec1f 100644
 +      // thresholds assume strength times the measured noise
 +      if(!_band_noise_fixed(1 + scale, band_sigma))
 +        _band_noise(buf, width, height, scale, band_sigma);
++      // DT_DN_BNSHAPE="<3 per scale 0..6>", DT_DN_BNSHAPEMODE=min|set: the
++      // noise of each band relative to the finest, as measured where
++      // noise dominates (high ISO); demosaic gives it the same shape at
++      // every ISO, while at low ISO the flattest blocks still hold faint
++      // structure that the estimate counts as noise. min caps the
++      // measurement at the shape, set replaces it
++      if(g_getenv("DT_DN_BNSHAPE"))
++      {
++        gchar **v = g_strsplit_set(g_getenv("DT_DN_BNSHAPE"), " ,", -1);
++        const gboolean set = !g_strcmp0(g_getenv("DT_DN_BNSHAPEMODE"), "set");
++        if(g_strv_length(v) >= (guint)(3 * scale + 3))
++          for(int c = 0; c < 3; c++)
++          {
++            const float shape = g_ascii_strtod(v[3 * scale + c], NULL);
++            band_sigma[c] = set ? shape : fminf(band_sigma[c], shape);
++          }
++        g_strfreev(v);
++      }
 +      for(int c = 0; c < 3; c++)
 +        band_sigma[c] = band_sigma[c] > 0.0f
 +          ? band_sigma[c] * d->strength
@@ -416,7 +434,7 @@ index 784d46e509..74d691ec1f 100644
      synthesize(out, out, buf, thrs, boost, width, height);
  
      float *buf3 = buf2;
-@@ -1584,6 +1912,14 @@ static void process_wavelets(dt_iop_module_t *self,
+@@ -1584,6 +1930,14 @@ static void process_wavelets(dt_iop_module_t *self,
    for(size_t k = 0; k < 4U * npixels; k++)
      out[k] += buf1[k];
  
@@ -431,7 +449,7 @@ index 784d46e509..74d691ec1f 100644
    if(!d->use_new_vst)
    {
      backtransform(out, width, height, aa, bb);
-@@ -1599,6 +1935,9 @@ static void process_wavelets(dt_iop_module_t *self,
+@@ -1599,6 +1953,9 @@ static void process_wavelets(dt_iop_module_t *self,
                           p, d->b[1], d->bias - 0.5 * logf(in_scale), wb, toRGB_trans);
    }
  
@@ -441,7 +459,7 @@ index 784d46e509..74d691ec1f 100644
    dt_free_align(buf);
    dt_free_align(tmp);
    dt_free_align(precond);
-@@ -2603,6 +2942,9 @@ int process_cl(dt_iop_module_t *self,
+@@ -2603,6 +2960,9 @@ int process_cl(dt_iop_module_t *self,
    }
    else if(d->mode == MODE_WAVELETS || d->mode == MODE_WAVELETS_AUTO)
    {
@@ -451,7 +469,7 @@ index 784d46e509..74d691ec1f 100644
      return process_wavelets_cl(self, piece, dev_in, dev_out, roi_in, roi_out);
    }
    else
-@@ -3006,6 +3348,7 @@ void commit_params(dt_iop_module_t *self,
+@@ -3006,6 +3366,7 @@ void commit_params(dt_iop_module_t *self,
    d->wb_adaptive_anscombe = p->wb_adaptive_anscombe;
    d->fix_anscombe_and_nlmeans_norm = p->fix_anscombe_and_nlmeans_norm;
    d->use_new_vst = p->use_new_vst;

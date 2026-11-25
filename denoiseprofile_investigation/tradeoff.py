@@ -97,22 +97,27 @@ def rock_chroma(path, geo):
     return (100 * (sd['G'] ** 2 + sd['B'] ** 2) ** 0.5, corr('G'), corr('B'))
 
 
-rock = '--rock' in sys.argv
-if rock:
-    sys.argv.remove('--rock')
-print(f'{"render":24s} wall noise  bird detail  ratio  wall chroma'
-      '  wall mottle  specks  grass specks'
-      + ('  rock chroma  corr(L,a)  corr(L,b)' if rock else ''))
-for p in sys.argv[1:]:
-    wall, bird, grass = (region(p, WALL, 'wall'), region(p, BIRD, 'bird'),
-                         region(p, GRASS, 'grass'))
-    w, b = hp_rms(*wall), hp_rms(*bird)
-    c = chroma_rms(*wall)
-    m = hp_rms(*wall, '0x2', '0x16')
-    name = p.rsplit('/', 1)[-1].removesuffix('.png')
-    print(f'{name:24s} {w:10.4f}  {b:11.4f}  {b / w if w else float('inf'):5.2f}  {c:11.3f}'
-          f'  {m:11.4f}  {specks(*wall):6d}  {specks(*grass):12d}', end='')
+def main():
+    rock = '--rock' in sys.argv
     if rock:
-        rc = rock_chroma(*region(p, ROCK, 'rock'))
-        print(f'  {rc[0]:11.3f}  {rc[1]:9.2f}  {rc[2]:9.2f}', end='')
-    print()
+        sys.argv.remove('--rock')
+    print(f'{"render":24s} wall noise  bird detail  ratio  wall chroma'
+          '  wall mottle  specks  grass specks'
+          + ('  rock chroma  corr(L,a)  corr(L,b)' if rock else ''))
+    for p in sys.argv[1:]:
+        wall, bird, grass = (region(p, WALL, 'wall'), region(p, BIRD, 'bird'),
+                             region(p, GRASS, 'grass'))
+        w, b = hp_rms(*wall), hp_rms(*bird)
+        c = chroma_rms(*wall)
+        m = hp_rms(*wall, '0x2', '0x16')
+        name = p.rsplit('/', 1)[-1].removesuffix('.png')
+        print(f'{name:24s} {w:10.4f}  {b:11.4f}  {b / w if w else float('inf'):5.2f}  {c:11.3f}'
+              f'  {m:11.4f}  {specks(*wall):6d}  {specks(*grass):12d}', end='')
+        if rock:
+            rc = rock_chroma(*region(p, ROCK, 'rock'))
+            print(f'  {rc[0]:11.3f}  {rc[1]:9.2f}  {rc[2]:9.2f}', end='')
+        print()
+
+
+if __name__ == '__main__':
+    main()

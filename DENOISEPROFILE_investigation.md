@@ -85,6 +85,15 @@ in-camera noise reduction at its default (0).
   texture**, because chroma detail is removed while luma detail is kept.
   One transform exponent for all channels plus luma-guided chroma detail
   brings it to the JPEG's level.
+- **On 79 holiday images (session 11) the new mode only pays off from
+  about ISO 400 up.** At ISO 200 it keeps 95% of the texture where old
+  mode at its defaults keeps 99% at the same noise. At ISO 250-1000 it
+  removes much more noise and all specks for 5-10% less texture; at ISO
+  6400 and up it removes the specks and leaves flat areas cleaner than
+  the JPEG. At ISO 25600 it washes out color in texture. The low-ISO
+  texture loss comes from the noise estimate, which counts faint
+  structure as noise; capping it at the noise's high-ISO shape recovers
+  most of it.
 
 ## Samples
 
@@ -150,7 +159,11 @@ plus ImageMagick and the built `darktable-cli`:
   variants at 16 bit, prints `tradeoff.py` for all of them, the per-scale
   estimates and thresholds, and the wall's own band noise, and restores the
   source on exit. Leaves about 3.3 GB of renders in its work directory.
-- `bandnoise.patch`: the session 6-10 experiments (`DT_DN_BANDNOISE=1`
+- `holiday.py` runs a set of raws with their camera JPEGs: tiles chosen
+  automatically, exposure matched by bisection, old mode, new mode at
+  several strengths and named variants (session 11); `holiday_summary.py`
+  reports by ISO band.
+- `bandnoise.patch`: the session 6-11 experiments (`DT_DN_BANDNOISE=1`
   and the variant switches listed there); bit-identical output when off. It
   carries its own copy of the detail-band dump, so do not stack
   `instrumentation.patch` on it.
@@ -826,6 +839,106 @@ Crop sets were checked against full frames again (guide, one exponent,
 1.2: identical in every column but one grass speck). Switched off, the
 patch is still bit-identical to the unpatched module; session 8's
 setting renders unchanged.
+
+## Session 11: 79 holiday images, ISO 200 to 25600
+
+The user's holiday set (`C:\temp\denoise\holiday`, 370 G9 RW2 + JPG
+pairs, Vivid, Cloudy WB; JPEG noise reduction "Standard", i.e. 0, on 175,
+-5 on 195). Tested: all 39 above ISO 200 (ISO 250-1000: 35, ISO 6400,
+20000 and two at 25600) and 40 random ISO 200 shots.
+
+`holiday.py` does per image what sessions 9-10 did by hand, with no
+hand-picked regions:
+
+- tiles from the camera JPEG, 4x downscaled so noise does not count: the
+  two flattest and the two most textured 360x260 tiles at mid brightness,
+  away from the borders;
+- exposure: the base history (`base_xmp.py`) gets the EV whose 1000 px
+  render matches the JPEG's mean gray (bisection), then capture sharpening
+  on and autotuned by darktable;
+- renders: no denoise, old mode at its defaults for the ISO
+  (`wav_default`, so what a user gets without touching it), and session
+  10's setting (one exponent, r 8, Wiener luma, leave-block-out 1,
+  despeck 2, guide) at strength 0.75, 0.9, 1.1 and 1.2;
+- per tile: `tradeoff.py`'s high-pass RMS, specks, chroma and mottle.
+
+`holiday_summary.py` reports per image and per ISO band: noise (flat
+tiles), detail (textured tiles, relative to no denoise), specks, chroma.
+About 1 minute per image and variant set; 79 images took 79 minutes,
+the two extra strengths 33 more.
+
+Medians per ISO band (noise = flat-tile high-pass over mean; detail =
+textured-tile high-pass relative to no denoise):
+
+| band | | JPEG | none | old default | new 0.75 | new 0.9 | new 1.1 | new 1.2 |
+|---|---|---|---|---|---|---|---|---|
+| 200 (40) | noise | 0.0047 | 0.0062 | 0.0042 | 0.0045 | 0.0040 | 0.0033 | 0.0030 |
+| | detail | 1.47 | 1.00 | 0.99 | 0.95 | 0.93 | 0.92 | 0.91 |
+| 250-500 (17) | noise | 0.0107 | 0.0197 | 0.0143 | 0.0113 | 0.0083 | 0.0047 | 0.0033 |
+| | detail | 1.26 | 1.00 | 0.98 | 0.94 | 0.93 | 0.91 | 0.90 |
+| 640-1000 (18) | noise | 0.0096 | 0.0277 | 0.0177 | 0.0163 | 0.0134 | 0.0084 | 0.0056 |
+| | detail | 1.18 | 1.00 | 0.95 | 0.90 | 0.88 | 0.87 | 0.86 |
+| | specks | 0 | 58 | 16 | 0 | 0 | 0 | 0 |
+| 6400-25600 (4) | noise | 0.0200 | 0.0851 | 0.0620 | 0.0437 | 0.0315 | 0.0140 | 0.0095 |
+| | detail | 0.66 | 1.00 | 0.86 | 0.67 | 0.58 | 0.49 | 0.46 |
+| | specks | 166 | 15475 | 8441 | 3750 | 1312 | 51 | 5 |
+
+What it says:
+
+- **The JPEG's detail number is not comparable.** Above 1 at low ISO
+  means its in-camera sharpening adds high-pass the raw does not have
+  (1.47 at ISO 200). Only the darktable columns compare with each other.
+- **ISO 200: the new mode costs texture for nothing.** Old mode at its
+  defaults already reaches the JPEG's noise level with 99% of the
+  texture; the new mode at the same noise (0.75) keeps 95%. Visually the
+  ISO 200 tiles are hard to tell apart.
+- **ISO 250-1000: the new mode removes much more noise and all specks,
+  at 5-10% less texture.** Many of these are f/1.4 shots whose "textured"
+  tiles are out-of-focus background, where much of the high-pass is
+  noise; there the new mode and the JPEG are both smooth and old mode
+  keeps grain (2x crops, `iso200_800_texture_zoom.jpg`). The detail
+  number overstates the loss on such tiles; a noise-corrected version
+  (subtracting the flat tiles' noise in quadrature) gave the same
+  ranking, within 0.01-0.02.
+- **ISO 6400 and up (4 images, P1378616 among them):** as in sessions
+  8-10, specks go from thousands to tens and the flat areas get cleaner
+  than the JPEG's. At the JPEG's noise level (strength about 1.0) the
+  new mode keeps about 0.55 of the textured high-pass against the JPEG's
+  0.66, which includes sharpening.
+- **New problem at ISO 25600 (P1378610, P1378612): color loss.** The new
+  mode washes out color variation in texture, such as purple leaves and
+  green grass, which old mode (noisy) and the JPEG (Vivid) keep.
+  Chroma detail is removed at all scales at this noise level (session 6),
+  and the guide only restores chroma that follows luma texture. Not
+  measured; seen in the tile montages.
+- **Strength:** to match the JPEG's noise, the new mode needs about 0.75
+  at ISO 200, 0.8-0.9 at 250-1000 and 1.0-1.1 at 6400 and up. The
+  measured-noise mode was meant to make strength mean the same at every
+  ISO, so this is a sign that its noise estimate is off at low ISO.
+
+Why low ISO costs texture, tested on 20 images (10 at ISO 200, 10 at
+640-1000), strength 0.9:
+
+- Not despeck and not Wiener: turning off either or both changes detail
+  by 0.01 at most.
+- **The noise estimate.** The block 10th percentile counts faint
+  structure as noise when the noise is low. At ISO 200 the estimated
+  scale-1 luma noise is 0.54-0.77 of the finest band's (P1378441,
+  P1378497, P1378726), against 0.36 where noise dominates (P1378616,
+  ISO 20000, and P1378294, ISO 800); at scale 3, 0.21-0.26 against 0.09.
+  Demosaic should give the noise the same shape at every ISO.
+  `DT_DN_BNSHAPE` caps each band's estimate at P1378616's shape (min mode,
+  `DT_DN_BNSHAPEMODE=set` replaces it): ISO 200 detail 0.93 to 0.96 at
+  0.9 and 0.90 to 0.95 at 1.1, noise up by 15-20%. No change at 640-1000
+  and above, where the estimate already has that shape.
+
+Not done: a fixed shape is one camera and one demosaic; it would have to
+come from the profile or from a measurement at a known noise level. The
+color loss at very high ISO is unexplored. OpenCL, other cameras.
+
+Montages for 8 images, the 2x texture crops and the per-image table are
+in `C:\temp\denoise\compare\holiday\`. The renders are in
+`/tmp/hol/run` (1.3 GB, tiles only).
 
 ## Round 1 TODOs
 

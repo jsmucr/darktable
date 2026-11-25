@@ -99,7 +99,7 @@ for s in (1.0, 1.5, 2.0, 3.0, 4.0):
         strength=s, chroma=0.8, shadows=0.5))]
     VARIANTS[f'sw_oldw_s{s}'] = [('denoiseprofile', 12, denoiseprofile(
         strength=s, chroma=0.8, shadows=0.5, wbadapt=0))]
-for s in (0.75, 1.0, 1.1, 1.15, 1.2, 1.25, 1.3, 1.5, 2.0):
+for s in (0.6, 0.75, 0.9, 1.0, 1.1, 1.15, 1.2, 1.25, 1.3, 1.5, 2.0):
     VARIANTS[f'sw_bn_s{s}'] = [('denoiseprofile', 12, denoiseprofile(
         strength=s, chroma=1.0, shadows=0.5))]
     # session 10: one transform exponent for all channels
