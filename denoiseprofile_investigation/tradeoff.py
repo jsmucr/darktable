@@ -16,6 +16,9 @@
 #   specks       wall pixels more than 10% of the mean off their 5x5 median
 #   grass specks the same on the grass crop, where texture lowers the
 #                local thresholds; counts texture too (the JPEG has 1954)
+#   rock chroma  (--rock) Lab a, b band 1-16 px RMS on the rock crop, x100,
+#                and the correlation of a and b with L in that band: color
+#                that follows the luma texture (session 10)
 # with equal wall noise, more bird detail means less structure was removed.
 # A robust (MAD) measure was tried first and collapses to 0 on smoothed
 # output while ignoring specks and mottle.
@@ -25,6 +28,7 @@ import sys
 WALL = '360x260+1900+500'
 BIRD = '360x260+2050+2050'
 GRASS = '360x260+600+3300'
+ROCK = '360x260+2950+2530'
 MARGIN = 300  # crop_xmp.py
 
 
@@ -74,8 +78,31 @@ def specks(path, geo):
     return int(out)
 
 
+def rock_chroma(path, geo):
+    # band 1-16 px of L, a and b; spread of a, b and their correlation with L
+    def band(ch):
+        return ['(', path, '-crop', geo, '+repage', '-colorspace', 'Lab',
+                '-channel', ch, '-separate', '+channel', '-blur', '0x1',
+                '(', '+clone', '-blur', '0x16', ')', '-compose', 'mathematics',
+                '-define', 'compose:args=0,1,-1,0.5', '-composite', ')']
+    def run(args, fmt):
+        return subprocess.run(['convert', *args, '-format', fmt, 'info:'],
+                              capture_output=True, check=True,
+                              text=True).stdout
+    sd = {c: float(run(band(c), '%[fx:standard_deviation]')) for c in 'RGB'}
+    def corr(c):
+        m = float(run(band('R') + band(c) + ['-fx', '(u-0.5)*(v-0.5)+0.5'],
+                      '%[fx:mean]')) - 0.5
+        return m / (sd['R'] * sd[c]) if sd['R'] * sd[c] else 0.0
+    return (100 * (sd['G'] ** 2 + sd['B'] ** 2) ** 0.5, corr('G'), corr('B'))
+
+
+rock = '--rock' in sys.argv
+if rock:
+    sys.argv.remove('--rock')
 print(f'{"render":24s} wall noise  bird detail  ratio  wall chroma'
-      '  wall mottle  specks  grass specks')
+      '  wall mottle  specks  grass specks'
+      + ('  rock chroma  corr(L,a)  corr(L,b)' if rock else ''))
 for p in sys.argv[1:]:
     wall, bird, grass = (region(p, WALL, 'wall'), region(p, BIRD, 'bird'),
                          region(p, GRASS, 'grass'))
@@ -84,4 +111,8 @@ for p in sys.argv[1:]:
     m = hp_rms(*wall, '0x2', '0x16')
     name = p.rsplit('/', 1)[-1].removesuffix('.png')
     print(f'{name:24s} {w:10.4f}  {b:11.4f}  {b / w if w else float('inf'):5.2f}  {c:11.3f}'
-          f'  {m:11.4f}  {specks(*wall):6d}  {specks(*grass):12d}')
+          f'  {m:11.4f}  {specks(*wall):6d}  {specks(*grass):12d}', end='')
+    if rock:
+        rc = rock_chroma(*region(p, ROCK, 'rock'))
+        print(f'  {rc[0]:11.3f}  {rc[1]:9.2f}  {rc[2]:9.2f}', end='')
+    print()

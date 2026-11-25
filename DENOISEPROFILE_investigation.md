@@ -77,7 +77,14 @@ in-camera noise reduction at its default (0).
   the JPEG is crisper in the feathers and grass (0.179 against 0.139),
   with Vivid color and in-camera sharpening. Session 8's "more detail
   than the JPEG" was measured on renders 1.5 EV too dark and is
-  **retracted**. New: dark blue-green speckle in the rock texture.
+  **retracted**.
+- **With capture sharpening (the user's normal sharpening) the measured
+  mode adapts and old mode does not** (session 10): old mode's wall noise
+  quadruples and its specks rise from 100 to 1361; the new mode gains
+  detail at less noise. The rock speckle is a **tint that follows the luma
+  texture**, because chroma detail is removed while luma detail is kept.
+  One transform exponent for all channels plus luma-guided chroma detail
+  brings it to the JPEG's level.
 
 ## Samples
 
@@ -126,10 +133,15 @@ plus ImageMagick and the built `darktable-cli`:
   channel and scale in the module's own detail bands, and the
   cross-channel correlation), repeats the RCD export with and without white
   balance, and restores the source on exit.
-- `quick.sh` renders only the three `tradeoff.py` regions of P1378616 as
-  a crop set (session 8), in 4-10 s per variant; `crop_xmp.py` writes the
-  cropped histories, and `tradeoff.py` takes a crop set's prefix in place
-  of a render. `session8.sh` re-runs session 8 with it in about 5 minutes.
+- `quick.sh` renders only the `tradeoff.py` regions of P1378616 as a
+  crop set (session 8; wall, bird, grass, and rock from session 10), in
+  4-10 s per variant; `crop_xmp.py` writes the cropped histories, and
+  `tradeoff.py` takes a crop set's prefix in place of a render (`--rock`
+  adds the rock columns). `session8.sh` re-runs session 8 with it in
+  about 5 minutes.
+- `base_xmp.py` writes the base history from session 9 on: this image's
+  own white balance, matched exposure, optionally demosaic capture
+  sharpening. `session10.sh` re-runs session 10 in about 9 minutes.
 - `perchannel.patch`: the session 5 experiment, switched on with
   `DT_DN_PERCHANNEL=1`; bit-identical output when off.
 - `bandnoise.sh` re-runs sessions 6 and 7 in about 20 minutes: it renders four
@@ -138,7 +150,7 @@ plus ImageMagick and the built `darktable-cli`:
   variants at 16 bit, prints `tradeoff.py` for all of them, the per-scale
   estimates and thresholds, and the wall's own band noise, and restores the
   source on exit. Leaves about 3.3 GB of renders in its work directory.
-- `bandnoise.patch`: the session 6-8 experiments (`DT_DN_BANDNOISE=1`
+- `bandnoise.patch`: the session 6-10 experiments (`DT_DN_BANDNOISE=1`
   and the variant switches listed there); bit-identical output when off. It
   carries its own copy of the detail-band dump, so do not stack
   `instrumentation.patch` on it.
@@ -713,12 +725,99 @@ wall):
   the bird's head and the grass, has stronger color (Vivid) and visible
   sharpening; we have none.
 - New issue: the rock shows dark blue-green speckle in its texture that
-  the JPEG does not have. Most likely chroma noise surviving in texture,
-  where the local window takes the luma texture's variance as chroma
-  signal too. Not measured yet.
+  the JPEG does not have. Session 10 shows it is a tint tied to the luma
+  texture, not chroma noise as first guessed here.
 
 The renders, the side-by-side and the 100% crops are in
 `/c/temp/denoise/compare/` on this machine, with the history used.
+
+## Session 10: capture sharpening, and the rock tint follows the luma
+
+New base history (`base_xmp.py`): session 9's, optionally with the
+demosaic module's capture sharpening at the values darktable autotunes
+for this file (radius 0.53, threshold 0.45; `-d pipe` prints them). This
+is the user's normal sharpening. Demosaic runs before denoise (profiled),
+so the sharpening changes the noise the module sees. `quick.sh` takes
+the base through `TEMPLATE`, the cached band noise is now keyed on the
+transform too, and `tradeoff.py --rock` adds a rock region: the Lab a, b
+spread in the 1-16 px band, and the correlation of a and b with L in
+that band, i.e. color that follows the luma texture.
+
+**Capture sharpening.** Old mode does not know about the sharpened noise:
+at strength 3, wall noise goes from 0.0062 to 0.0241 and wall specks from
+100 to 1361. The measured-noise mode adapts. At 1.2 with sharpening it
+has wall noise 0.0042 and bird detail 0.144, against 0.0065 and 0.139 at
+1.1 without, so sharpening first gives more detail at less noise. The gap
+to the JPEG's 0.179 narrows to 0.146-0.156 for the variants below.
+
+**The rock speckle is not chroma noise** (session 9 guessed it was). The
+same render without denoise has corr(L, a) -0.13 to -0.22 on the rock,
+the JPEG -0.15. The new mode has 0.87: the tint is tied to the luma
+texture. Cause, in the transformed domain: for a surface of one color,
+each channel's detail is its share of the luma detail, so U0 and V0
+carry detail that is texture, not noise. The module removes nearly all
+chroma detail (session 6) and keeps luma detail, so the backtransform
+puts a texture-shaped tint on a neutral rock. The per-channel transform
+exponents (from the white balance, `wb_adaptive_anscombe`, the
+"whitebalance-adaptive transform" toggle) make it stronger: they bend the
+channels differently, so even a gray surface has chroma detail.
+
+Two fixes, both on top of session 8's setting (r 8, Wiener luma,
+leave-block-out 1, despeck 2), on the sharpened base:
+
+- **One exponent for all channels** (the toggle off; `bnw` in
+  `quick.sh`): corr(L, a) 0.87 to 0.02, but corr(L, b) 0.30 to 0.81. The
+  tint moves from teal to blue-gray and stays.
+- **Luma-guided chroma detail** (`DT_DN_BNCGUIDE=1`): predict each chroma
+  coefficient as luma detail times the coarse chroma-to-luma ratio at
+  that pixel, shrink only the residual, and add the prediction back
+  scaled by the denoised luma detail. With one exponent: 0.05 and 0.42,
+  closest to the JPEG's -0.15 and 0.36. With per-channel exponents it
+  overshoots (corr(L, a) -0.56), as expected when the channels are not
+  bent alike.
+
+| sharpened base | wall noise | bird detail | wall chroma | specks | grass specks | rock chroma | corr(L,a) | corr(L,b) |
+|---|---|---|---|---|---|---|---|---|
+| old 3.0 (full) | 0.0241 | 0.108 | 0.311 | 1361 | 1611 | 0.478 | 0.52 | 0.16 |
+| old 3.0, one exponent (full) | 0.0054 | 0.087 | 0.126 | 74 | 104 | 0.316 | 0.21 | 0.41 |
+| new 1.1 | 0.0109 | 0.150 | 0.160 | 41 | 973 | 0.942 | 0.87 | 0.29 |
+| new 1.2 | 0.0042 | 0.144 | 0.128 | 0 | 250 | 0.920 | 0.87 | 0.30 |
+| one exponent 1.2 | 0.0042 | 0.149 | 0.121 | 2 | 305 | 0.609 | 0.02 | 0.81 |
+| guide, per-channel exp. 1.2 | 0.0042 | 0.149 | 0.127 | 0 | 413 | 0.579 | -0.56 | 0.64 |
+| guide, one exponent 1.1 | 0.0111 | 0.153 | 0.158 | 39 | 2060 | 0.436 | 0.05 | 0.42 |
+| guide, one exponent 1.2 | 0.0040 | 0.146 | 0.125 | 0 | 472 | 0.416 | 0.06 | 0.43 |
+| no denoise | | | | | | | -0.13 to -0.22 | 0.12 to 0.28 |
+| camera JPEG | 0.0187 | 0.179 | 0.841 | 30 | 1954 | 0.645 | -0.15 | 0.36 |
+
+(The no-denoise row is from a 1 px and a 3 px pre-blur of the band; the
+others use 1 px. The grass speck count rises with the guide because the
+grass keeps more color texture, which the count includes.)
+
+Visually (2x crops of rock, bird head and grass): with one exponent and
+the guide the rock is neutral gray with a faint purple-blue variation,
+like the JPEG's; session 8's setting gives teal speckle, one exponent
+alone blue-gray speckle. Bird and grass are as in session 8, slightly
+more colored. The JPEG still has more color in the grass and more
+feather crispness.
+
+The grass looks more olive than in session 9's render, but that is the
+earlier renders drifting, not this one: mean Lab on the grass crop is
+L 57.9, a -7.1, b 24.1 without denoise, a -8.4 to -8.9 and b 25.4-25.5
+for old 3.0 and the session 8 setting, and a -7.4, b 24.2 with one
+exponent and the guide. On the rock the session 8 setting moves a from
++0.63 to -0.57 (the teal), the guide leaves +0.30.
+
+Side finding for stock darktable: with sharpening, old mode at 3.0 and
+the "whitebalance-adaptive transform" toggle off has a quarter of the
+wall noise, a twentieth of the wall specks and less rock tint, but 19%
+less bird detail. The toggle changes how strength maps to the actual
+noise level, so this is not a like-for-like comparison; a lower strength
+with the toggle off was not tried.
+
+Crop sets were checked against full frames again (guide, one exponent,
+1.2: identical in every column but one grass speck). Switched off, the
+patch is still bit-identical to the unpatched module; session 8's
+setting renders unchanged.
 
 ## Round 1 TODOs
 

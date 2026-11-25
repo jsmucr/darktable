@@ -20,6 +20,7 @@ REGIONS = {  # tradeoff.py regions, x y w h
     'wall': (1900, 500, 360, 260),
     'bird': (2050, 2050, 360, 260),
     'grass': (600, 3300, 360, 260),
+    'rock': (2950, 2530, 360, 260),
 }
 BLEND = 'gz11eJxjYIAACQYYOOHEgAZY0QWAgBGLGANDgz0Ej1Q+dcF/IADRAGpyHQU='
 

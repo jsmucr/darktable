@@ -1,9 +1,13 @@
 #!/bin/bash
 # fast iteration: render only the tradeoff.py regions of P1378616
 #
-#   ./quick.sh <name> <old|bn> <strength> [VAR=value ...]
+#   ./quick.sh <name> <old|bn|bnw> <strength> [VAR=value ...]
 #
-# writes <work>/<name>_{wall,bird,grass}.png (each region plus a 300 px
+# bnw: the bn variants with one transform exponent for all channels
+# (wb_adaptive_anscombe off, variants_xmp.py). TEMPLATE=... sets the
+# history the variants are appended to (base_xmp.py output from session 10)
+#
+# writes <work>/<name>_{wall,bird,grass,rock}.png (each region plus a 300 px
 # margin, crop_xmp.py), about 1.5 s per crop instead of 17 s per frame;
 # pass <work>/<name> to tradeoff.py. bn renders run with DT_DN_BANDNOISE=1
 # DT_DN_BNONCE=1 and the band noise fixed to the full frame's estimates for
@@ -45,14 +49,14 @@ cli() {
 }
 
 envs=()
-if [ "$mode" = bn ]; then
+if [ "${mode#bn}" != "$mode" ]; then
   # DT_DN_DESPECK changes the data before the noise is measured, so the
   # estimates are cached per strength and despeck level
   pre=()
   for a in "$@"; do
     case $a in DT_DN_DESPECK=*) pre=("$a") ;; esac
   done
-  fixed=$work/xmp/bnfixed_s${s}${pre:+_${pre#DT_DN_}}.txt
+  fixed=$work/xmp/bnfixed_${mode}_s${s}${pre:+_${pre#DT_DN_}}.txt
   if [ ! -s "$fixed" ]; then
     cfg=$(mktemp -d)
     env DT_DN_BANDNOISE=1 DT_DN_BNONCE=1 DT_DN_BANDNOISE_LOG=1 "${pre[@]}" \
@@ -76,7 +80,7 @@ print(" ".join(v))' > "$fixed"
 v = open('$fixed').read().split()
 print(' '.join(v[:3] + [str(float(t) / $s) for t in v[3:]]))")")
 fi
-for r in wall bird grass; do
+for r in wall bird grass rock; do
   (
     [ ${#envs[@]} -gt 0 ] && export "${envs[@]}"
     [ $# -gt 0 ] && export "$@"

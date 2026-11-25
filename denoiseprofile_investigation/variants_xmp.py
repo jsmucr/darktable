@@ -3,12 +3,14 @@
 #
 #   python3 variants_xmp.py <template.xmp> <green a of the profile> <outdir>
 #
-# the template must end its history at num 10 (history_end="11"); the one
-# used so far is the scene-referred default history of
+# the entries are appended after the template's history_end. Sessions 2-8
+# used the scene-referred default history of
 # ~/Pictures/Darktable/20260430_no_name/20260430_0012.RW2.xmp, which carries
-# that image's white balance and color calibration
+# that image's white balance and color calibration; from session 10 on the
+# template is base_xmp.py's output
 import math
 import os
+import re
 import struct
 import sys
 
@@ -17,7 +19,7 @@ BLEND = 'gz11eJxjYIAACQYYOOHEgAZY0QWAgBGLGANDgz0Ej1Q+dcF/IADRAGpyHQU='
 
 
 def denoiseprofile(mode=1, strength=1.0, luma=0.5, chroma=0.5, gain=1.0,
-                   color=1, shadows=None):
+                   color=1, shadows=None, wbadapt=1):
     # dt_iop_denoiseprofile_params_t, version 12: 416 bytes
     # mode: 0 nlmeans, 1 wavelets, 3 nlmeans auto, 4 wavelets auto
     # color: 0 RGB, 1 Y0U0V0; luma/chroma are flat curve heights (0.5 = off)
@@ -36,7 +38,9 @@ def denoiseprofile(mode=1, strength=1.0, luma=0.5, chroma=0.5, gain=1.0,
     ys = []
     for ch in range(6):  # all, R, G, B, Y0, U0V0
         ys += [luma if ch == 4 else chroma if ch == 5 else 0.5] * 7
-    b += struct.pack('<42f', *ys) + struct.pack('<5i', 1, 1, 1, color, 0)
+    # wbadapt: wb_adaptive_anscombe, transform exponent per channel from
+    # the white balance (1, the default) or one exponent for all (0)
+    b += struct.pack('<42f', *ys) + struct.pack('<5i', wbadapt, 1, 1, color, 0)
     assert len(b) == 416
     return b.hex()
 
@@ -93,22 +97,28 @@ VARIANTS = {
 for s in (1.0, 1.5, 2.0, 3.0, 4.0):
     VARIANTS[f'sw_old_s{s}'] = [('denoiseprofile', 12, denoiseprofile(
         strength=s, chroma=0.8, shadows=0.5))]
+    VARIANTS[f'sw_oldw_s{s}'] = [('denoiseprofile', 12, denoiseprofile(
+        strength=s, chroma=0.8, shadows=0.5, wbadapt=0))]
 for s in (0.75, 1.0, 1.1, 1.15, 1.2, 1.25, 1.3, 1.5, 2.0):
     VARIANTS[f'sw_bn_s{s}'] = [('denoiseprofile', 12, denoiseprofile(
         strength=s, chroma=1.0, shadows=0.5))]
+    # session 10: one transform exponent for all channels
+    VARIANTS[f'sw_bnw_s{s}'] = [('denoiseprofile', 12, denoiseprofile(
+        strength=s, chroma=1.0, shadows=0.5, wbadapt=0))]
 
 x = open(template).read()
 end = '    </rdf:Seq>\n   </darktable:history>'
-assert end in x and 'history_end="11"' in x
+assert end in x
+n0 = int(re.search(r'darktable:history_end="(\d+)"', x).group(1))
 for name, items in VARIANTS.items():
     s = ''
     for k, (op, ver, p) in enumerate(items):
-        s += (f'     <rdf:li darktable:num="{11 + k}"'
+        s += (f'     <rdf:li darktable:num="{n0 + k}"'
               f' darktable:operation="{op}" darktable:enabled="1"\n'
               f'      darktable:modversion="{ver}" darktable:params="{p}"'
               f' darktable:multi_name="" darktable:multi_priority="0"\n'
               f'      darktable:blendop_version="14"'
               f' darktable:blendop_params="{BLEND}"/>\n')
     y = x.replace(end, s + end, 1).replace(
-        'history_end="11"', f'history_end="{11 + len(items)}"')
+        f'history_end="{n0}"', f'history_end="{n0 + len(items)}"')
     open(os.path.join(outdir, f'{name}.xmp'), 'w').write(y)

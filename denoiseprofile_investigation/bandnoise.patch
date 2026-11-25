@@ -1,5 +1,5 @@
 diff --git a/src/iop/denoiseprofile.c b/src/iop/denoiseprofile.c
-index 784d46e509..9ca3b96a52 100644
+index 784d46e509..74d691ec1f 100644
 --- a/src/iop/denoiseprofile.c
 +++ b/src/iop/denoiseprofile.c
 @@ -24,6 +24,8 @@
@@ -176,7 +176,7 @@ index 784d46e509..9ca3b96a52 100644
  }
  
  static void process_wavelets(dt_iop_module_t *self,
-@@ -1552,9 +1659,98 @@ static void process_wavelets(dt_iop_module_t *self,
+@@ -1552,9 +1659,103 @@ static void process_wavelets(dt_iop_module_t *self,
  
    debug_dump_PFM(piece, "transformed", precond, width, height, 0);
  
@@ -256,16 +256,21 @@ index 784d46e509..9ca3b96a52 100644
 +    ? atof(g_getenv("DT_DN_BNLKMIN")) : 0.0f;
 +  const gboolean local_loo = g_getenv("DT_DN_BNLOO") != NULL;
 +  const gboolean local_wiener = g_getenv("DT_DN_BNWIENER") != NULL;
++  const gboolean local_cguide = local_r > 0 && g_getenv("DT_DN_BNCGUIDE")
++    && d->wavelet_color_mode == MODE_Y0U0V0;
++  float *const guide = local_cguide ? dt_alloc_align_float(4 * npixels) : NULL;
 +  const gboolean local_wiener_luma = local_wiener
 +    && !strcmp(g_getenv("DT_DN_BNWIENER"), "y");
 +  const int local_lbo = local_r > 0 && g_getenv("DT_DN_BNLBO")
 +    ? atoi(g_getenv("DT_DN_BNLBO")) : 0;
 +  float *const inner = local_lbo > 0 ? dt_alloc_align_float(4 * npixels) : NULL;
 +  float *const local = local_r > 0 ? dt_alloc_align_float(4 * npixels) : NULL;
-+  if((local_r > 0 && !local) || (local_lbo > 0 && !inner))
++  if((local_r > 0 && !local) || (local_lbo > 0 && !inner)
++     || (local_cguide && !guide))
 +  {
 +    dt_free_align(local);
 +    dt_free_align(inner);
++    dt_free_align(guide);
 +    dt_free_align(buf);
 +    dt_free_align(tmp);
 +    dt_free_align(precond);
@@ -275,7 +280,7 @@ index 784d46e509..9ca3b96a52 100644
    // clear the output buffer, which will be accumulating all of the detail scales
    dt_iop_image_fill(out, 0.0f, width, height, 4);
  
-@@ -1571,7 +1767,105 @@ static void process_wavelets(dt_iop_module_t *self,
+@@ -1571,7 +1772,134 @@ static void process_wavelets(dt_iop_module_t *self,
  
      const dt_aligned_pixel_t boost = { 1.0f, 1.0f, 1.0f, 1.0f };
      dt_aligned_pixel_t thrs;
@@ -331,6 +336,30 @@ index 784d46e509..9ca3b96a52 100644
 +        num[c] = thrs_bayes[c] * sqrtf(MAX(1e-6f, vy - sb2[c]));
 +        kfloor[c] = local_kmin * band_sigma[c] / d->strength;
 +      }
++      // DT_DN_BNCGUIDE=1: for a surface of one color, the chroma detail in
++      // the transformed domain is the luma detail times the coarse chroma
++      // to luma ratio. Shrinking chroma detail to zero instead leaves a
++      // flat chroma under textured luma, which the backtransform turns into
++      // a tint that follows the texture. Split the chroma detail into that
++      // prediction and a residual, and shrink only the residual
++      if(local_cguide)
++      {
++        DT_OMP_FOR()
++        for(size_t k = 0; k < npixels; k++)
++        {
++          const float cy = buf2[4 * k];
++          for(int c = 1; c < 3; c++)
++          {
++            // each channel carries its own noise gain, so the ratio is in
++            // normalized units and may well exceed 1; below a few noise
++            // sigmas of luma it is meaningless
++            const float ratio = cy > 4.0f
++              ? CLAMP(buf2[4 * k + c] / cy, -16.0f, 16.0f) : 0.0f;
++            guide[4 * k + c] = ratio;
++            buf[4 * k + c] -= ratio * buf[4 * k];
++          }
++        }
++      }
 +      DT_OMP_FOR()
 +      for(size_t k = 0; k < npixels; k++)
 +        for_four_channels(c)
@@ -351,9 +380,12 @@ index 784d46e509..9ca3b96a52 100644
 +      DT_OMP_FOR()
 +      for(size_t k = 0; k < npixels; k++)
 +      {
++        float yout = 0.0f;  // this scale's denoised luma detail
 +        for(int c = 0; c < 3; c++)
 +        {
 +          const float v = buf[4 * k + c];
++          const float pred = local_cguide && c > 0 ? guide[4 * k + c] * yout : 0.0f;
++          const float before = out[4 * k + c];
 +          // leave-one-out: without it an outlier raises its own window's
 +          // variance, lowers its own threshold and survives as a speck
 +          const float m2 = local_lbo > 0
@@ -368,12 +400,14 @@ index 784d46e509..9ca3b96a52 100644
 +            // of soft thresholding, which leaves only the largest noise
 +            // coefficients and so turns the residual noise into specks
 +            const float sx2 = MAX(0.0f, m2 - sb2[c]);
-+            out[4 * k + c] += v * sx2 / (sx2 + sb2[c]);
++            out[4 * k + c] += v * sx2 / (sx2 + sb2[c]) + pred;
++            if(c == 0) yout = out[4 * k] - before;
 +            continue;
 +          }
 +          const float sx = sqrtf(MAX(1e-6f, m2 - sb2[c]));
 +          const float t = fmaxf(num[c] / sx, kfloor[c]);
-+          out[4 * k + c] += MAX(v - t, 0.0f) + MIN(v + t, 0.0f);
++          out[4 * k + c] += MAX(v - t, 0.0f) + MIN(v + t, 0.0f) + pred;
++          if(c == 0) yout = out[4 * k] - before;
 +        }
 +        out[4 * k + 3] += buf[4 * k + 3];
 +      }
@@ -382,7 +416,7 @@ index 784d46e509..9ca3b96a52 100644
      synthesize(out, out, buf, thrs, boost, width, height);
  
      float *buf3 = buf2;
-@@ -1584,6 +1878,14 @@ static void process_wavelets(dt_iop_module_t *self,
+@@ -1584,6 +1912,14 @@ static void process_wavelets(dt_iop_module_t *self,
    for(size_t k = 0; k < 4U * npixels; k++)
      out[k] += buf1[k];
  
@@ -397,16 +431,17 @@ index 784d46e509..9ca3b96a52 100644
    if(!d->use_new_vst)
    {
      backtransform(out, width, height, aa, bb);
-@@ -1599,6 +1901,8 @@ static void process_wavelets(dt_iop_module_t *self,
+@@ -1599,6 +1935,9 @@ static void process_wavelets(dt_iop_module_t *self,
                           p, d->b[1], d->bias - 0.5 * logf(in_scale), wb, toRGB_trans);
    }
  
 +  dt_free_align(local);
 +  dt_free_align(inner);
++  dt_free_align(guide);
    dt_free_align(buf);
    dt_free_align(tmp);
    dt_free_align(precond);
-@@ -2603,6 +2907,9 @@ int process_cl(dt_iop_module_t *self,
+@@ -2603,6 +2942,9 @@ int process_cl(dt_iop_module_t *self,
    }
    else if(d->mode == MODE_WAVELETS || d->mode == MODE_WAVELETS_AUTO)
    {
@@ -416,7 +451,7 @@ index 784d46e509..9ca3b96a52 100644
      return process_wavelets_cl(self, piece, dev_in, dev_out, roi_in, roi_out);
    }
    else
-@@ -3006,6 +3313,7 @@ void commit_params(dt_iop_module_t *self,
+@@ -3006,6 +3348,7 @@ void commit_params(dt_iop_module_t *self,
    d->wb_adaptive_anscombe = p->wb_adaptive_anscombe;
    d->fix_anscombe_and_nlmeans_norm = p->fix_anscombe_and_nlmeans_norm;
    d->use_new_vst = p->use_new_vst;
