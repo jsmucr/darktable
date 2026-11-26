@@ -1519,6 +1519,40 @@ verified, numbers recomputed from the stored metrics; corrections
 applied above (mean weight is not coverage, two table cells, the edge
 retention, the correlation as a hypothesis, the G9 advice).
 
+## Session 19: the user's own capture sharpening setting
+
+All five workflow histories carry the same demosaic setting: LMMSE,
+local green matching, 5 color smoothing passes, capture sharpening on
+with radius 0.87 and threshold 0.33, pinned for every ISO, below the
+autotuned 0.45 (G9, 12-bit). `rpu_cswf.py` (render agent,
+claude-sonnet-5.5) renders each history unchanged except for the
+threshold (and a no-sharpening reference), tiles picked on the camera
+JPEG, gains relative to no sharpening. Results in
+`C:\temp\denoise\compare\cs\workflow\`.
+
+| image | ISO | mask mean at 0.33 | edge / flat gain at 0.33 | best with flat gain <= 1.05 |
+|---|---|---|---|---|
+| P1378395 | 200 | 0.70 | 1.77 / 1.66 | 0.55: 1.31 / 1.03 |
+| P1378550 | 800 | 0.71 | 1.68 / 1.53 | 0.50: 1.31 / 1.04 |
+| P1378607 | 6400 | 0.97 | 1.72 / 1.71 | 0.55: 1.05 / 1.01 |
+| P1378616 | 20000 | 0.99 | 1.69 / 1.68 | 0.55: 1.17 / 1.04 |
+| P1378610 | 25600 | 1.00 | 1.66 / 1.67 | 0.60: 1.13 / 1.02 |
+
+- At ISO 6400 and up the 0.33 mask covers essentially the whole frame:
+  the sky and dark backgrounds get the same sharpening as edges. The
+  user's denoise is chroma-only, so this sharpened luma grain reaches the
+  output untouched; it is part of why their high-ISO renders looked
+  worse than the camera JPEG. Visually (P1378616, 2x crops) 0.33 turns
+  the sky into coarse grain; 0.55 looks like no sharpening on the sky
+  and keeps some edge crispness on feathers and grass.
+- At ISO 200 the "flat" tile is meadow grass, i.e. texture, so its gain
+  at 0.33 is sharpened detail, not noise. Visually 0.33 is crisper than
+  the higher thresholds and looks clean; the 1.05 criterion does not
+  apply there, and the user's own preference ("a little luma noise
+  makes it crispier") favors keeping 0.33 at low ISO.
+- Suggested for this setup: keep 0.33 up to about ISO 800, 0.55 from
+  ISO 6400, 0.60 at 25600. Not measured between 800 and 6400.
+
 ## Round 1 TODOs
 
 1. **Done (session 4): what produces the dark specks.** The concave
