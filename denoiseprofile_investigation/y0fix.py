@@ -28,19 +28,19 @@ import holiday  # noqa: E402
 import workflow  # noqa: E402
 
 
-def default_params(a, color=1):
+def default_params(a, color=1, wbadapt=1, strength=1.0):
     # dt_iop_denoiseprofile_params_t v12 as reload_defaults() sets it
     # (variants_xmp.py wav_default)
     radius = float(min(int(1 + a * 15000 + a * a * 300000), 8))
     scattering = min(3000 * a, 1.0)
     shadows = min(max(0.1 - 0.1 * math.log(a), 0.7), 1.8)
     bias = -max(5 + 0.5 * math.log(a), 0.0)
-    f = [radius, 7.0, 1.0, shadows, bias, scattering, 0.1, 1.0,
+    f = [radius, 7.0, strength, shadows, bias, scattering, 0.1, 1.0,
          -1.0, 0, 0, 0, 0, 0]
     b = struct.pack('<14f', *f) + struct.pack('<i', 1)
     b += struct.pack('<42f', *([k / 6.0 for k in range(7)] * 6))
     b += struct.pack('<42f', *([0.5] * 42))
-    b += struct.pack('<5i', 1, 1, 1, color, 0)
+    b += struct.pack('<5i', wbadapt, 1, 1, color, 0)
     assert len(b) == 416
     return b.hex()
 

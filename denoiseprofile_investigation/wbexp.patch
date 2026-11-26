@@ -1,0 +1,37 @@
+--- a/src/iop/denoiseprofile.c	2026-11-26 13:41:03.943200981 +0100
++++ b/src/iop/denoiseprofile.c	2026-11-26 13:41:37.425189157 +0100
+@@ -1494,9 +1494,14 @@
+ 
+   // adaptive p depending on white balance (the "unused" fourth
+   // element enables vectorization
+-  const dt_aligned_pixel_t p = { MAX(d->shadows + 0.1 * logf(in_scale / wb[0]), 0.0f),
+-                                 MAX(d->shadows + 0.1 * logf(in_scale / wb[1]), 0.0f),
+-                                 MAX(d->shadows + 0.1 * logf(in_scale / wb[2]), 0.0f),
++  // DT_DN_WBEXP: one exponent for all channels, from the mean of the
++  // coefficients as with wb_adaptive_anscombe off, while the conversion
++  // matrices keep the per-channel coefficients
++  const float wbm = (wb[0] + wb[1] + wb[2]) / 3.0f;
++  const gboolean one_exp = g_getenv("DT_DN_WBEXP") != NULL;
++  const dt_aligned_pixel_t p = { MAX(d->shadows + 0.1 * logf(in_scale / (one_exp ? wbm : wb[0])), 0.0f),
++                                 MAX(d->shadows + 0.1 * logf(in_scale / (one_exp ? wbm : wb[1])), 0.0f),
++                                 MAX(d->shadows + 0.1 * logf(in_scale / (one_exp ? wbm : wb[2])), 0.0f),
+                                  0.0f };
+ 
+   const float compensate_p =
+@@ -2322,10 +2327,12 @@
+   compute_wb_factors(wb,d,piece,wb_weights);
+   wb[3] = 0.0f;
+ 
+-  // adaptive p depending on white balance
+-  const dt_aligned_pixel_t p = { MAX(d->shadows + 0.1 * logf(scale / wb[0]), 0.0f),
+-                                 MAX(d->shadows + 0.1 * logf(scale / wb[1]), 0.0f),
+-                                 MAX(d->shadows + 0.1 * logf(scale / wb[2]), 0.0f),
++  // adaptive p depending on white balance (DT_DN_WBEXP as in process_wavelets)
++  const float wbm = (wb[0] + wb[1] + wb[2]) / 3.0f;
++  const gboolean one_exp = g_getenv("DT_DN_WBEXP") != NULL;
++  const dt_aligned_pixel_t p = { MAX(d->shadows + 0.1 * logf(scale / (one_exp ? wbm : wb[0])), 0.0f),
++                                 MAX(d->shadows + 0.1 * logf(scale / (one_exp ? wbm : wb[1])), 0.0f),
++                                 MAX(d->shadows + 0.1 * logf(scale / (one_exp ? wbm : wb[2])), 0.0f),
+                                  1.0f};
+ 
+   // conversion to Y0U0V0 space as defined in Secrets of image denoising cuisine

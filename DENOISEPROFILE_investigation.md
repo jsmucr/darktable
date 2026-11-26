@@ -1359,6 +1359,78 @@ maintainers may ask for covariance-aware normalization, since demosaic
 correlates the channels and even the fixed row is not unit-variance on
 real data.
 
+## Session 17: per-channel transform exponents, like-for-like
+
+Hypothesis (Round 3 triage A): the "whitebalance-adaptive transform"
+(`wb_adaptive_anscombe`, on by default, `5c4d6750ba`, 2019) gives each
+channel its own exponent and scale, p_c = shadows + 0.1 log(in_scale /
+wb_c) (`denoiseprofile.c:1497`, `:2326`), applied before the Y0U0V0
+matrix (`:1155-1158`). The matrix comment (`:1318-1322`) keeps U0 and V0
+unadapted so that they cancel the signal; unequal exponents break that,
+so a gray texture leaks into chroma, which is then removed: the rock
+tint of session 10. Session 10's toggle-off comparison also changed the
+matrices and the strength mapping.
+
+`wbexp.patch` (on top of `y0fix.patch`, switch `DT_DN_WBEXP=1`, CPU and
+OpenCL, the latter only compiled) sets all three exponents from the mean
+coefficient, as toggle-off does, and leaves the per-channel matrices.
+Switched off, PFM byte-identical to an unpatched build (G9 sample with
+capture sharpening). `rpu_wbexp.py` renders as shipped (`ship`), `eq`
+(the switch) and `off` (toggle off), each with and without capture
+sharpening (demosaic radius 0 so darktable autotunes it, `_cs`), and
+measures per tile the chroma that follows the luma texture in the 1-16
+px band: "locked" = 100 sqrt((corr(L,a) sd_a)^2 + (corr(L,b) sd_b)^2),
+computed in python (`tradeoff.rock_chroma`'s `-fx` product quantizes at
+Q16 and gave |corr| > 1 on flat tiles). Capture sharpening only
+autotunes on an unaltered history (`src/iop/demosaic.c:925`); the XMPs
+carry equal basic and current history hashes for that, checked to
+change nothing else. Results in `C:\temp\denoise\compare\wbexp\`.
+
+At the module's defaults (strength 1, 15 cameras), eq against ship:
+median flat-tile chroma 0.97x, flat-tile locked chroma 0.82x but tiny in
+absolute terms, textured-tile locked chroma 1.00x, fine luma 1.01x.
+Nothing visible.
+
+At strength 3, P1378616 (ISO 20000, with session 10's rock and wall as
+fixed tiles) and six cameras:
+
+| tile | version | fine luma | chroma | locked | corr(L,a) | specks |
+|---|---|---|---|---|---|---|
+| rock | ship | 0.0057 | 0.96 | 0.238 | +0.58 | 888 |
+| rock | eq | 0.0053 | 0.92 | 0.135 | +0.29 | 715 |
+| rock | off | 0.0030 | 0.85 | 0.108 | +0.43 | 13 |
+| wall | ship | 0.0032 | 0.11 | 0.021 | +0.98 | 626 |
+| wall | eq | 0.0029 | 0.08 | 0.001 | +0.29 | 472 |
+| wall | off | 0.0006 | 0.07 | 0.000 | +0.11 | 14 |
+
+- On P1378616 one exponent removes 43% of the texture-locked chroma on
+  the rock and nearly all of it on the wall, at the same luma and chroma
+  level: the mechanism holds like-for-like. Visually the rock's faint
+  teal speckle turns more neutral; a subtle difference.
+- On the six other cameras at strength 3 the textured tiles' locked
+  chroma changes by -9% to +5% (G9 ISO 3200 sample -8% and -9%).
+- Specks barely depend on the exponents (rock 888 to 715). Toggle-off's
+  drop to 13 comes with half the fine luma: its other effects denoise
+  luma harder, so session 10's speck result was mostly not the
+  exponents.
+- The user's chroma-only preset has "preserve shadows" 0, which clamps
+  every p_c to 0 when the coefficients are at least 1, so all channels
+  already share one exponent there.
+- Verdict: a real inconsistency with the matrix's design, but its effect
+  is small except at very high ISO, strong white balance, high strength
+  and neutral texture. Not worth an issue of its own; worth a sentence
+  if the Y0U0V0 conversion is reworked for #23265 (the same params
+  version could use one exponent in Y0U0V0 mode).
+
+Capture sharpening at the module's defaults (input to triage B): flat
+fine luma relative to the unsharpened, undenoised render rises above 1.0
+on 8 of 15 cameras (R50 0.80 to 1.45, M3 0.83 to 1.63, ILCE-7C 0.78 to
+1.38): the default then leaves more grain than an unsharpened image
+without denoise. Speck counts rise 1.1-3.7x. It depends strongly on the
+camera and the autotuned values (G9 sample unchanged at 0.75, autotuned
+radius 0.61, threshold 0.45). The exponent switch makes no difference
+to it.
+
 ## Round 1 TODOs
 
 1. **Done (session 4): what produces the dark specks.** The concave
