@@ -1,0 +1,46 @@
+diff --git a/src/iop/demosaicing/capture.c b/src/iop/demosaicing/capture.c
+index 1a104d85c3..227e8f4942 100644
+--- a/src/iop/demosaicing/capture.c
++++ b/src/iop/demosaicing/capture.c
+@@ -900,6 +900,41 @@ static void _capture_sharpen(dt_iop_module_t *self,
+     blendmask[k] = CLIP(w_tmp2 * tmp2[k] + (1.0f - w_tmp2) * blendmask[k]);
+   }
+ 
++  // DT_CS_DUMP=<file>: write the sharpening mask as a one-channel PFM, top row first,
++  // in the coordinates of this buffer, and print its coverage
++  const char *cs_dump = g_getenv("DT_CS_DUMP");
++  if(cs_dump && dt_pipe_is_export(pipe))
++  {
++    FILE *f = g_fopen(cs_dump, "wb");
++    if(f)
++    {
++      fprintf(f, "Pf\n%d %d\n-1.0\n", width, height);
++      for(int row = height - 1; row >= 0; row--)
++        fwrite(blendmask + (size_t)row * width, sizeof(float), width, f);
++      fclose(f);
++    }
++    // the luminance the mask is computed from (Yold), same layout, <file>.Y.pfm
++    gchar *ypath = g_strconcat(cs_dump, ".Y.pfm", NULL);
++    f = g_fopen(ypath, "wb");
++    if(f)
++    {
++      fprintf(f, "Pf\n%d %d\n-1.0\n", width, height);
++      for(int row = height - 1; row >= 0; row--)
++        fwrite(tmp1 + (size_t)row * width, sizeof(float), width, f);
++      fclose(f);
++    }
++    g_free(ypath);
++    double sum = 0.0;
++    size_t half = 0;
++    for(size_t k = 0; k < pixels; k++)
++    {
++      sum += blendmask[k];
++      half += blendmask[k] > 0.5f;
++    }
++    dt_print(DT_DEBUG_ALWAYS, "capture mask %dx%d+%d+%d thrs=%.3f radius=%.3f mean=%.4f above_half=%.4f",
++             width, height, dx, dy, d->cs_thrs, d->cs_radius, sum / pixels, (double)half / pixels);
++  }
++
+   if(show_variance_mask)
+   {
+     DT_OMP_FOR()

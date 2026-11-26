@@ -1433,6 +1433,65 @@ camera and the autotuned values (G9 sample unchanged at 0.75, autotuned
 radius 0.61, threshold 0.45). The exponent switch makes no difference
 to it.
 
+## Session 18: capture sharpening's threshold at high ISO
+
+Capture sharpening (demosaic) only sharpens where a 21-pixel local
+sqrt(variance / mean) of luminance exceeds a sigmoid threshold set by
+`cs_thrs` (`_modify_blend`, `src/iop/demosaicing/capture.c:769`). The
+autotuned `cs_thrs` comes from EXIF ISO, clamped to 100-1000
+(`_get_variance_threshold`, `:49-77`; its comment calls it a rough
+estimate for ISO 50-1000 and "automatic noise detection" is listed as a
+TODO at `:32`), so above ISO 1000 it stays at 0.35-0.45 whatever the
+noise. The noise profile darktable has for the camera is not used.
+
+`csmask.patch` (user's build, `DT_CS_DUMP=<file>`) writes the
+sharpening mask and its luminance as PFM and prints the mask coverage;
+unset, nothing changes. `rpu_cs.py` and `rpu_cs2.py` (written by the
+render agent, `.kiro/agents/dt-render-runner.json`, claude-sonnet-5.5)
+render the 15 raw.pixls.us cameras plus P1378616 with capture
+sharpening at the autotuned radius and swept thresholds, with denoise
+off and at the module's defaults, on session 17's tiles. Results in
+`C:\temp\denoise\compare\cs\` and `cs\fine\`.
+
+- At the autotuned threshold the mask covers 15-100% of the frame at
+  ISO 1600+ (R50 at 32000: 99.9%, M3 at 5000: 79%), i.e. mostly noise.
+  Flat-tile fine luma rises to 1.0-1.77x the unsharpened render and
+  specks up to 18x; with denoise at its defaults the result has more
+  grain than the undenoised, unsharpened image on 8 of 16 files.
+- At 0.6 the mask is nearly empty (0-2%) on 14 of 16 files, so
+  sharpening is effectively off. In between, `rpu_cs2.py` splits each
+  tile into edge pixels (top 15% gradient of the denoised render) and
+  flat pixels (bottom 50%) and compares high-pass RMS with the
+  unsharpened reference. Best threshold with flat gain <= 1.05, eight
+  files:
+
+| file | ISO | green a | auto | best | edge / flat gain at best | at auto |
+|---|---|---|---|---|---|---|
+| Fujifilm X-T10 | 4000 | 1.98e-5 | 0.35 | 0.45 | 1.29 / 1.04 | 1.43 / 1.26 |
+| Fujifilm X70 | 6400 | 2.14e-5 | 0.35 | 0.40 | 1.22 / 1.02 | 1.34 / 1.18 |
+| Canon EOS 77D | 3200 | 8.98e-5 | 0.35 | 0.50 | 1.16 / 1.01 | 1.75 / 1.65 |
+| Sony ILCE-7C | 12800 | 1.04e-4 | 0.35 | 0.45 | 1.25 / 1.04 | 1.75 / 1.62 |
+| Canon EOS M3 | 5000 | 1.62e-4 | 0.37 | 0.55 | 1.15 / 1.02 | 1.86 / 1.81 |
+| G9 P1378616 | 20000 | 2.18e-4 | 0.45 | 0.50 | 1.19 / 1.05 | 1.34 / 1.18 |
+| Nikon 1 J5 | 6400 | 2.54e-4 | 0.45 | 0.55 | 1.05 / 1.01 | 1.56 / 1.41 |
+| Canon EOS R50 | 32000 | 4.62e-4 | 0.35 | 0.65 | 1.18 / 1.05 | 1.54 / 1.53 |
+
+  (denoise off; denoise on gives the same thresholds within 0.05.)
+- A threshold 0.05-0.30 above the autotuned one keeps most of the edge
+  sharpening and stops the noise sharpening. The needed threshold
+  follows the profile's noise level (correlation with log a 0.86) much
+  better than ISO (0.47): the X70 at ISO 6400 needs 0.40, the M3 at 5000
+  needs 0.55. So the threshold should come from the noise profile, not
+  from ISO. Eight files, 0.05 steps, one tile set each.
+- For the user's G9: ISO 3200 needs nothing (auto 0.45 adds no flat
+  grain), ISO 20000 needs about 0.50.
+- Visually (P1378616, 2x crops): at the autotuned threshold the dark
+  background gets visibly more speckle under denoise; at 0.50 it does
+  not, and edges stay slightly crisper than without sharpening.
+- Not checked: low ISO (where the threshold formula lowers the value and
+  is meant to sharpen more), a profile-based formula itself, OpenCL
+  (the mask dump is CPU-only).
+
 ## Round 1 TODOs
 
 1. **Done (session 4): what produces the dark specks.** The concave
