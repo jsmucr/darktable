@@ -1251,8 +1251,8 @@ Tile stats (fine and mid Lab L energy, chroma spread; none = denoise off):
   distance in Y0U0V0 (`dn_weight`, `src/common/eaw.c:264`); the
   oversized Y0 makes luma noise dominate that distance, so the old row
   also weakens chroma smoothing. Visually a small change.
-- At the module's defaults the fix denoises luma about 6x harder and the
-  result is plastic, with bright specks left in flat areas. The 2.5
+- At the module's defaults the fix leaves 5-7x less luma band energy on
+  the flat tiles (fine 5.4x, mid 7.0x less) and the result is plastic, with bright specks left in flat areas. The 2.5
   Y0U0V0 compensation, `adjt` 8 and the default curves are tuned around
   the old row, so a real fix is a retune of luma strength, not this line
   alone, and needs a params version.
@@ -1260,7 +1260,9 @@ Tile stats (fine and mid Lab L energy, chroma spread; none = denoise off):
 Then with the 2.5 Y0U0V0 compensation removed as well (`DT_DN_Y0COMP=1`,
 CPU and OpenCL paths, the latter only compiled), against module
 defaults in RGB mode, which the 2.5 was added to match (`e8ba78b89a`,
-2021, a year after the row in `2a1da03998`):
+2021, a year after the row: the 1/wb weighting came in `2447cd0b68`,
+the sqrt(3) and the unit-variance comment that make it 3 sum(1/wb) too
+large in `2a1da03998`, both 2020-01-15):
 
 | version | flat_0 fine | flat_0 mid | flat_0 chroma | tex_0 mid | tex_1 mid | tex_1 chroma |
 |---|---|---|---|---|---|---|
@@ -1283,7 +1285,8 @@ defaults in RGB mode, which the 2.5 was added to match (`e8ba78b89a`,
   the dark areas (visible in the montage); not looked into.
 - With switches off the render is byte-identical to before (`dflt`).
 - So on this file both the 2.5 and the row can go together, `adjt` 8
-  (2013, shared with RGB mode) stays. One file, one ISO, one demosaic.
+  (`c2051d2d81`, 2013, which raised an earlier factor 2 from
+  `00fa1ddae2`; shared with RGB mode) stays. One file, one ISO, one demosaic.
 
 ## Session 16: the Y0 row fix on 15 cameras from raw.pixls.us
 
@@ -1293,7 +1296,8 @@ full-size raws only) and takes the highest-ISO sample per camera. The
 integration test images (`src/tests/integration/images`) are ISO 50-250
 apart from `mire1.cr2` (EOS 40D, 1600, a test chart), so they were not
 used. Picked: 15 cameras, ISO 1600-32000, from Canon, Nikon, Sony,
-Fujifilm (one X-Trans), Panasonic, Pentax and Olympus (raws in `C:\temp\denoise\rpu\raw\`). `rpu_y0.py` renders each at
+Fujifilm (one X-Trans), Panasonic, Pentax and Olympus (raws in
+`C:\temp\denoise\rpu\raw\`). `rpu_y0.py` renders each at
 darktable's auto-applied defaults plus one denoise (profiled) entry at
 the module's defaults: off, Y0U0V0 as shipped, Y0U0V0 with
 `DT_DN_Y0FIX=1 DT_DN_Y0COMP=1`, and RGB mode. Tiles picked on the
@@ -1323,18 +1327,37 @@ chroma spread over all tiles):
 - As shipped, the default leaves 63-89% of the fine luma noise on flat
   areas on every camera: the oversized Y0 row is not G9-specific.
 - With the fix and no 2.5, the mid band on textured tiles matches RGB
-  mode within 3% on 14 of 15 cameras (Nikon 1 J5: 0.35 against 0.30;
-  median ratio 1.00). On flat areas it leaves more fine grain than RGB
-  mode (median 1.45x RGB's residual). Chroma is lower than as shipped
-  on 14, equal on the ILCE-7C (median 0.88x), and at or below RGB mode
-  on all.
+  mode's ratio to denoise-off within 0.03 on 14 of 15 cameras (Nikon 1
+  J5: 0.35 against 0.30), within 3% relative on 12 (also not the D7200
+  and K-7); median fix/RGB 1.00. On flat areas it leaves more fine grain
+  than RGB mode (median 1.45x RGB's residual). Chroma is lower than as
+  shipped on all 15 (median 0.88x; the ILCE-7C only 0.8% lower) and at
+  or below RGB mode on all.
 - Visually, matching RGB mode's luma smoothing is too much for fine
   texture at the module's default strength: the D7200 fur and the K-x
   surface come out painterly in both. So the 2.5 can go with the fix,
   but the default strength for the fixed mode is a separate choice.
 - The R50 at ISO 32000 keeps dark specks after the fix (session 4).
-- Not checked: that darktable matched each camera's profile (only the
-  JSON names were compared), and anything beyond one sample per camera.
+- `-d pipe` runs (by the reviewer below) confirm that darktable matched
+  a real noise profile for all 15 cameras and that the pipe runs
+  temperature, demosaic, denoiseprofile, colorin. The script bypasses
+  `reload_defaults()` and hardcodes `compensate_hilite_pres` 0; none of
+  these 15 raws has a highlight-preservation ISO shift, but a wider set
+  could. Not checked: anything beyond one sample per camera; OpenCL.
+- The metrics are post-pipeline Lab band energies and chroma spread,
+  which mix noise and texture. "Matches RGB mode" holds for the mid-band
+  metric only, and the texture judgement is visual.
+
+Independent review (gpt-reviewer agent, after commit `84b8d4d536`):
+claims about the row, the unit-variance U0/V0 rows, the fallback, the
+edge-aware chroma effect and the strength-migration argument verified by
+arithmetic and code reading; the patch renders pixel-identical with the
+switches unset (PFM `cmp` against an unpatched build). Corrections it
+asked for are applied above. It also noted that `DT_DN_Y0COMP` set to an
+empty, invalid or zero value divides by zero (experiment only), and that
+maintainers may ask for covariance-aware normalization, since demosaic
+correlates the channels and even the fixed row is not unit-variance on
+real data.
 
 ## Round 1 TODOs
 
