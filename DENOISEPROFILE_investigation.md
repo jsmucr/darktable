@@ -1223,6 +1223,66 @@ images); full renders in `/tmp/wf/run` (2.4 GB).
    `data/kernels/denoiseprofile.cl` take scalar a and b has not been
    checked.
 
+## Round 3 TODOs (after session 14)
+
+State: the measured-noise mode (`bandnoise.patch`, switches in sessions
+6-13; best setting: one transform exponent, inferred "preserve shadows",
+r 8, Wiener luma, leave-block-out 1, despeck 2, chroma guide, shape cap,
+strength about 0.6 / 0.75 / 1.0 at ISO 200 / 640-1000 / 6400+) beats old
+mode and the user's chroma-only preset at high ISO but loses on texture
+to darktable's raw neural denoise and to Topaz in the user's workflow
+(session 14). In priority order:
+
+1. **Upstream write-up of the low-risk findings**, for discussion before
+   any code (CONTRIBUTING.md: substantial). Each stands on its own:
+   - Y0U0V0 luma about 5x and chroma about 0.25x the noise the model
+     assumes: cross-channel correlation after demosaic, and the Y0 row
+     multiplying by sum(1/wb) (`denoiseprofile.c:1311`, session 5);
+   - the specks: dark-skewed noise after the transform, clipped
+     photosites, soft thresholding (session 4), and despeck plus Wiener
+     as a fix (session 8);
+   - capture sharpening in demosaic raises the noise the module sees
+     and old mode does not adapt (session 10);
+   - per-channel profile entries do not fit white-balanced data
+     (session 5);
+   - the rock tint: removing chroma detail while keeping luma detail
+     tints neutral texture, made worse by the white-balance-adaptive
+     transform (session 10).
+   Include the measurements, the scripts that reproduce them, and say
+   plainly that the full new mode does not beat learned denoisers.
+2. **The colored specks** in dark textured areas at ISO 6400+ in the
+   user's workflow (session 14). Not the chroma guide, luma-only Wiener
+   or "preserve shadows". Next: dump U0/V0 detail bands on a P1378607
+   bark crop, check whether they are chroma outliers the despeck pass
+   misses (it tests each channel against its own neighbors), and
+   whether they appear without the user's color balance rgb.
+3. **Decide whether to continue the wavelet mode at all.** If yes, the
+   open items before it could be a real mode: a noise-dependent
+   strength (the matching strength still rises with ISO), the edge halo
+   (session 8), the steep strength response, the noise shape from the
+   profile instead of a fixed table (session 12), the OpenCL path, a
+   params version with old histories unchanged, other cameras.
+4. **Why the neural denoise loses to Topaz on detail** (session 14).
+   Model and training questions more than darktable ones; possibly
+   tile size, input normalization or the strength blend in
+   `src/common/ai/restore_raw_bayer.c`. Read before measuring.
+5. **Profiling convention** (round 2 candidate 3): profiles are measured
+   without white balance and with the finest Haar diagonal coefficient
+   (sessions 3, 5), both unlike what the module sees.
+6. Smaller loose ends:
+   - my render of the user's default history differs from their export
+     by a large ring pattern and in chroma (session 14), presumably
+     their branch (`master-plus-my-fixes`); find which module;
+   - the default "as shot" white balance comes with late correction,
+     so without color calibration the output is camera reference, not
+     as shot (session 9 note);
+   - `holiday.py`'s tile renders (`HOLIDAY_TILES=1`) do not match full
+     frames at r 8; widen the margin or drop the option.
+
+Scratch data that later steps may reuse: `/tmp/hol/run` (79 holiday
+images, tiles of every variant, 2.6 GB), `/tmp/wf/run` (session 14
+full renders, 2.4 GB), `/tmp/dn11` (session 10 renders, 1.1 GB).
+
 ## Round 2 candidates
 
 1. **Y0U0V0 noise normalization.** Luma 5x, chroma 0.25x the model
