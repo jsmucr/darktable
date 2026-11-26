@@ -1420,7 +1420,9 @@ fixed tiles) and six cameras:
   is small except at very high ISO, strong white balance, high strength
   and neutral texture. Not worth an issue of its own; worth a sentence
   if the Y0U0V0 conversion is reworked for #23265 (the same params
-  version could use one exponent in Y0U0V0 mode).
+  version could use one exponent in Y0U0V0 mode). Posted as a comment
+  on #23265 (text as drafted, no image: the side-by-side shows no
+  visible difference at 100%).
 
 Capture sharpening at the module's defaults (input to triage B): flat
 fine luma relative to the unsharpened, undenoised render rises above 1.0
