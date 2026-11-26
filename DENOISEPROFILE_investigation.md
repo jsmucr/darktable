@@ -1188,6 +1188,30 @@ grain.)
   unchanged) and not the inferred "preserve shadows" (0.5 instead:
   worse). Not found yet.
 
+**Addendum: the render difference is the lens module.** The user's
+exports came from their branch at `3ad3ebf6de` (upstream master at
+`71a00aad99`, 46 commits newer than this branch's base `46908385e6`,
+with `rw2-tca-pr` merged: Panasonic chromatic aberration correction from
+the RW2 metadata, in `src/common/exif.cc` and `src/iop/lens.cc`), built
+and rendered on Windows. Built from that commit in a separate worktree
+(`/home/smuj/git/darktable-3ad3ebf6de`, its own `build/`) and run under
+WSL, their default history reproduces their export to an RMSE of 0.26
+and at most 11 of 65535 (P1378616, P1378395); the remainder is
+presumably the platform (Windows build, possibly OpenCL, against CPU
+under WSL), not examined. With the lens module off, this branch's build
+and theirs render byte-identically, so the ring pattern and the chroma
+difference are the metadata CA correction alone; the 46 upstream
+commits change nothing here. `denoiseprofile.c` is the same in both
+trees, and `bandnoise.patch` applies to theirs unchanged.
+
+Rerun of `workflow.py` with their build and the patch (`BUILD=` the
+worktree's build): their default now matches exactly in chroma as well
+(P1378616 flat tiles 3.35 against 3.35, was 2.78). The L-band numbers
+above change by at most 0.02 (P1378607 textured fine band), so the
+conclusions stand. Flat | textured chroma, now comparable: P1378616
+neural 75 1.48 | 3.91, Topaz 2.17 | 3.96, new 1.0 2.04 | 3.97;
+P1378607 neural 75 0.30 | 3.73, Topaz 0.08 | 1.16, new 1.0 0.47 | 4.16.
+
 So, against the two learned denoisers in the user's own workflow, the
 measured-noise mode does not win at any ISO. It does beat old mode
 (sessions 11-13) and the user's chroma-only preset at high ISO. The
@@ -1270,18 +1294,26 @@ to darktable's raw neural denoise and to Topaz in the user's workflow
    without white balance and with the finest Haar diagonal coefficient
    (sessions 3, 5), both unlike what the module sees.
 6. Smaller loose ends:
-   - my render of the user's default history differs from their export
-     by a large ring pattern and in chroma (session 14), presumably
-     their branch (`master-plus-my-fixes`); find which module;
+   - (done, session 14 addendum) my render of the user's default
+     history differed from their export: the RW2 CA correction from
+     `rw2-tca-pr` in their build. Compare future workflow renders with
+     their build (`/home/smuj/git/darktable-3ad3ebf6de/build`);
    - the default "as shot" white balance comes with late correction,
      so without color calibration the output is camera reference, not
      as shot (session 9 note);
    - `holiday.py`'s tile renders (`HOLIDAY_TILES=1`) do not match full
      frames at r 8; widen the margin or drop the option.
 
-Scratch data that later steps may reuse: `/tmp/hol/run` (79 holiday
-images, tiles of every variant, 2.6 GB), `/tmp/wf/run` (session 14
-full renders, 2.4 GB), `/tmp/dn11` (session 10 renders, 1.1 GB).
+Scratch data that later steps may reuse, moved off WSL to
+`C:\temp\denoise\scratch\` as tar archives that unpack to the paths
+the scripts use (`cd /tmp && tar xf /c/temp/denoise/scratch/hol.tar`):
+`hol.tar` (`/tmp/hol`: run/ with the 79 holiday images' tiles of every
+variant, metrics and XMPs, plus the shape logs and helper scripts,
+2.7 GB), `wf.tar` and `wf_tif.tar` (`/tmp/wf/run`: session 14 tiles,
+metrics, XMPs, and the full renders from this branch's build, 0.1 and
+2.4 GB), `wf2.tar` (`/tmp/wf2/run`: the same rendered with the user's
+build, the ones to use, 2.5 GB), `dn11.tar`
+(`/tmp/dn11` and `/tmp/dn10`: session 9-10 renders, 1.1 GB).
 
 ## Round 2 candidates
 
