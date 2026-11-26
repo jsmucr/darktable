@@ -1394,7 +1394,10 @@ to darktable's raw neural denoise and to Topaz in the user's workflow
 (session 14). In priority order:
 
 1. **Upstream write-up of the low-risk findings**, for discussion before
-   any code (CONTRIBUTING.md: substantial). Each stands on its own:
+   any code (CONTRIBUTING.md: substantial). The Y0 row went first, on
+   its own: darktable-org/darktable#23265 (2026-11-26, from sessions 15-16,
+   draft in `C:\temp\denoise\issue\`). The others wait for how that one
+   is received. Each stands on its own:
    - Y0U0V0 luma about 5x and chroma about 0.25x the noise the model
      assumes: cross-channel correlation after demosaic, and the Y0 row
      multiplying by sum(1/wb) (`denoiseprofile.c:1311`, session 5);
