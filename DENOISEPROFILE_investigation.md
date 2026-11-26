@@ -1223,6 +1223,119 @@ Renders and montages: `C:\temp\denoise\compare\workflow\` (tile
 montages, 2x crops, the new mode at strength 1.0 for the three high-ISO
 images); full renders in `/tmp/wf/run` (2.4 GB).
 
+## Session 15: fixing the Y0 row, rendered from the user's history
+
+`y0fix.patch` (switch `DT_DN_Y0FIX=1`) sets the Y0 row of
+`set_up_conversion_matrices` to 1/(sqrt(3) wb_c), the unit-variance row
+its comment describes, instead of sqrt(3) sum(1/wb) / wb_c
+(`denoiseprofile.c:1311`). The old row is larger by 3 sum(1/wb), about 6x
+for this file. Unchanged on upstream master `e4f691d8f7`. Applied to the
+user's build (`3ad3ebf6de`); `y0fix.py` renders P1378616 from
+`P1378616_1_default.xmp` (`/tmp/y0`, montage and JPEGs in
+`C:\temp\denoise\compare\y0fix\`).
+
+Tile stats (fine and mid Lab L energy, chroma spread; none = denoise off):
+
+| version | flat_0 fine | flat_0 chroma | tex_0 mid | tex_0 chroma | tex_1 chroma |
+|---|---|---|---|---|---|
+| none | 0.0641 | 4.40 | 0.0485 | 4.72 | 7.09 |
+| their export | 0.0641 | 3.30 | 0.0480 | 3.42 | 6.48 |
+| their history | 0.0641 | 3.30 | 0.0480 | 3.42 | 6.48 |
+| their history, fix | 0.0641 | 3.01 | 0.0481 | 3.09 | 6.24 |
+| module defaults | 0.0551 | 2.15 | 0.0462 | 2.64 | 6.00 |
+| module defaults, fix | 0.0103 | 0.96 | 0.0154 | 1.56 | 2.61 |
+
+- In the user's chroma-only preset (Y0 curve at 0, so the luma threshold
+  is 0) the fix still lowers chroma spread by 4-10% at unchanged luma.
+  The wavelet decomposition is edge-aware, with weights from the 3D
+  distance in Y0U0V0 (`dn_weight`, `src/common/eaw.c:264`); the
+  oversized Y0 makes luma noise dominate that distance, so the old row
+  also weakens chroma smoothing. Visually a small change.
+- At the module's defaults the fix denoises luma about 6x harder and the
+  result is plastic, with bright specks left in flat areas. The 2.5
+  Y0U0V0 compensation, `adjt` 8 and the default curves are tuned around
+  the old row, so a real fix is a retune of luma strength, not this line
+  alone, and needs a params version.
+
+Then with the 2.5 Y0U0V0 compensation removed as well (`DT_DN_Y0COMP=1`,
+CPU and OpenCL paths, the latter only compiled), against module
+defaults in RGB mode, which the 2.5 was added to match (`e8ba78b89a`,
+2021, a year after the row in `2a1da03998`):
+
+| version | flat_0 fine | flat_0 mid | flat_0 chroma | tex_0 mid | tex_1 mid | tex_1 chroma |
+|---|---|---|---|---|---|---|
+| module defaults | 0.0551 | 0.0210 | 2.15 | 0.0462 | 0.0442 | 6.00 |
+| defaults, fix, comp. 1 | 0.0449 | 0.0144 | 1.78 | 0.0400 | 0.0359 | 5.59 |
+| defaults, RGB mode | 0.0424 | 0.0145 | 7.07 | 0.0404 | 0.0368 | 8.51 |
+| their history, fix | 0.0641 | 0.0245 | 3.01 | 0.0481 | 0.0454 | 6.24 |
+| their history, fix, comp. 1 | 0.0641 | 0.0244 | 3.01 | 0.0480 | 0.0455 | 6.31 |
+
+- With the fixed row and no compensation, Y0U0V0 luma lands on RGB
+  mode's luma within 1-9% on every tile (mid band within 3%, fine band
+  5-9% above it), which is what the 2.5 was
+  for. It denoises luma more than today's defaults and is not plastic.
+- Chroma comes out lower than today's defaults although its scaling
+  drops 2.5x: the chroma detail is discarded at the threshold floor
+  either way (session 5), and the smaller Y0 lets the edge-aware weights
+  smooth chroma further. In the user's chroma-only preset the
+  compensation makes no measurable difference.
+- RGB mode's chroma spread is above denoise-off, from a green cast in
+  the dark areas (visible in the montage); not looked into.
+- With switches off the render is byte-identical to before (`dflt`).
+- So on this file both the 2.5 and the row can go together, `adjt` 8
+  (2013, shared with RGB mode) stays. One file, one ISO, one demosaic.
+
+## Session 16: the Y0 row fix on 15 cameras from raw.pixls.us
+
+`rpu_pick.py` lists raw.pixls.us samples whose camera has a darktable
+noise profile (`data/noiseprofiles.json`, exact maker/model match;
+full-size raws only) and takes the highest-ISO sample per camera. The
+integration test images (`src/tests/integration/images`) are ISO 50-250
+apart from `mire1.cr2` (EOS 40D, 1600, a test chart), so they were not
+used. Picked: 15 cameras, ISO 1600-32000, from Canon, Nikon, Sony,
+Fujifilm (one X-Trans), Panasonic, Pentax and Olympus (raws in `C:\temp\denoise\rpu\raw\`). `rpu_y0.py` renders each at
+darktable's auto-applied defaults plus one denoise (profiled) entry at
+the module's defaults: off, Y0U0V0 as shipped, Y0U0V0 with
+`DT_DN_Y0FIX=1 DT_DN_Y0COMP=1`, and RGB mode. Tiles picked on the
+denoise-off render. Results in `C:\temp\denoise\compare\rpu\`.
+
+Ratios to denoise off (flat tiles' fine band, textured tiles' mid band,
+chroma spread over all tiles):
+
+| camera | ISO | flat fine: shipped / fix / RGB | tex mid | chroma |
+|---|---|---|---|---|
+| Canon EOS R50 | 32000 | 0.80 / 0.54 / 0.53 | 0.95 / 0.76 / 0.77 | 0.49 / 0.38 / 0.64 |
+| Nikon D5600 | 12800 | 0.81 / 0.46 / 0.35 | 1.00 / 0.96 / 0.97 | 0.32 / 0.22 / 0.40 |
+| Sony ILCE-7C | 12800 | 0.78 / 0.32 / 0.20 | 0.82 / 0.65 / 0.66 | 0.87 / 0.87 / 0.87 |
+| Fujifilm X70 | 6400 | 0.81 / 0.60 / 0.52 | 0.99 / 0.99 / 0.99 | 0.48 / 0.43 / 0.65 |
+| Nikon 1 J5 | 6400 | 0.79 / 0.40 / 0.26 | 0.80 / 0.35 / 0.30 | 0.24 / 0.18 / 0.36 |
+| Panasonic DC-S5 | 6400 | 0.78 / 0.43 / 0.35 | 0.95 / 0.85 / 0.87 | 0.39 / 0.35 / 0.52 |
+| Canon EOS M3 | 5000 | 0.83 / 0.52 / 0.36 | 0.93 / 0.75 / 0.74 | 0.45 / 0.39 / 0.53 |
+| Fujifilm X-T10 | 4000 | 0.86 / 0.64 / 0.35 | 1.00 / 0.99 / 0.99 | 0.60 / 0.55 / 0.72 |
+| Canon EOS 77D | 3200 | 0.77 / 0.35 / 0.20 | 0.85 / 0.67 / 0.65 | 0.32 / 0.28 / 0.40 |
+| Panasonic DC-G9 | 3200 | 0.75 / 0.41 / 0.33 | 0.97 / 0.89 / 0.89 | 0.23 / 0.16 / 0.38 |
+| Panasonic DC-S1RM2 | 3200 | 0.63 / 0.08 / 0.03 | 0.99 / 0.97 / 0.98 | 0.49 / 0.46 / 0.48 |
+| Pentax K-7 | 3200 | 0.89 / 0.67 / 0.47 | 0.93 / 0.76 / 0.73 | 0.39 / 0.30 / 0.67 |
+| Pentax K-x | 2000 | 0.79 / 0.22 / 0.14 | 0.88 / 0.66 / 0.68 | 0.27 / 0.20 / 0.26 |
+| Nikon D7200 | 1600 | 0.78 / 0.31 / 0.20 | 0.95 / 0.75 / 0.77 | 0.37 / 0.33 / 0.40 |
+| Olympus E-PL1 | 1600 | 0.87 / 0.69 / 0.48 | 0.98 / 0.96 / 0.97 | 0.59 / 0.53 / 0.73 |
+
+- As shipped, the default leaves 63-89% of the fine luma noise on flat
+  areas on every camera: the oversized Y0 row is not G9-specific.
+- With the fix and no 2.5, the mid band on textured tiles matches RGB
+  mode within 3% on 14 of 15 cameras (Nikon 1 J5: 0.35 against 0.30;
+  median ratio 1.00). On flat areas it leaves more fine grain than RGB
+  mode (median 1.45x RGB's residual). Chroma is lower than as shipped
+  on 14, equal on the ILCE-7C (median 0.88x), and at or below RGB mode
+  on all.
+- Visually, matching RGB mode's luma smoothing is too much for fine
+  texture at the module's default strength: the D7200 fur and the K-x
+  surface come out painterly in both. So the 2.5 can go with the fix,
+  but the default strength for the fixed mode is a separate choice.
+- The R50 at ISO 32000 keeps dark specks after the fix (session 4).
+- Not checked: that darktable matched each camera's profile (only the
+  JSON names were compared), and anything beyond one sample per camera.
+
 ## Round 1 TODOs
 
 1. **Done (session 4): what produces the dark specks.** The concave

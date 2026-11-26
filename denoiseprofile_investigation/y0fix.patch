@@ -1,0 +1,39 @@
+diff --git a/src/iop/denoiseprofile.c b/src/iop/denoiseprofile.c
+index 784d46e509..7bb07da4b6 100644
+--- a/src/iop/denoiseprofile.c
++++ b/src/iop/denoiseprofile.c
+@@ -1313,6 +1313,12 @@ static void set_up_conversion_matrices(dt_colormatrix_t toY0U0V0,
+   toY0U0V0[0][1] = sum_invwb / wb[1];
+   toY0U0V0[0][2] = sum_invwb / wb[2];
+   toY0U0V0[0][3] = 0.0f;
++  // DT_DN_Y0FIX: the row the comment above describes. 1/wb weights scaled
++  // so that var(Y0) = 3 * (1 / sqrt(3))^2 = 1 when var(c) = wb[c]^2; the
++  // line above multiplies by sum(1/wb) instead, giving std 3 * sum(1/wb)
++  if(g_getenv("DT_DN_Y0FIX"))
++    for(int c = 0; c < 3; c++)
++      toY0U0V0[0][c] = 1.0f / (sqrtf(3.0f) * wb[c]);
+   // we also normalize the other line in a way that should give a variance of 1
+   // if var(B/wb[B]) == 1, then var(B) = wb[B]^2
+   // note that we don't change the coefs of U0 and V0 depending on white balance,
+@@ -1511,7 +1517,9 @@ static void process_wavelets(dt_iop_module_t *self,
+ 
+   // more strength in Y0U0V0 in order to get a similar smoothing as in other modes
+   // otherwise, result was much less denoised in Y0U0V0 mode.
+-  const float compensate_strength = (d->wavelet_color_mode == MODE_RGB) ? 1.0f : 2.5f;
++  const char *y0comp = g_getenv("DT_DN_Y0COMP");
++  const float compensate_strength = (d->wavelet_color_mode == MODE_RGB)
++    ? 1.0f : (y0comp ? g_ascii_strtod(y0comp, NULL) : 2.5f);
+   // update the coeffs with strength and scale
+   for(size_t k = 0; k < 3; k++)
+     for_each_channel(c)
+@@ -2333,7 +2341,9 @@ static int process_wavelets_cl(dt_iop_module_t *self,
+ 
+   // more strength in Y0U0V0 in order to get a similar smoothing as in other modes
+   // otherwise, result was much less denoised in Y0U0V0 mode.
+-  const float compensate_strength = (d->wavelet_color_mode == MODE_RGB) ? 1.0f : 2.5f;
++  const char *y0comp = g_getenv("DT_DN_Y0COMP");
++  const float compensate_strength = (d->wavelet_color_mode == MODE_RGB)
++    ? 1.0f : (y0comp ? g_ascii_strtod(y0comp, NULL) : 2.5f);
+ 
+   // update the coeffs with strength and scale
+   float toY0U0V0[9]; //TODO: change OpenCL kernels to use 3x4 matrices
