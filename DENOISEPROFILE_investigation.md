@@ -111,6 +111,15 @@ in-camera noise reduction at its default (0).
   more still at high ISO. The new mode also leaves colored specks in
   dark textured areas, cause not found yet. It still beats old mode and
   the user's chroma-only preset at high ISO.
+- **The default Y0U0V0 mode has a normalization bug** (sessions 15-16):
+  the luma row of the conversion matrix is 3 sum(1/wb) too large, so the
+  default barely denoises luma on every camera tested (15). Reported as
+  darktable-org/darktable#23265.
+- **At high ISO, capture sharpening sharpens the noise before denoise
+  sees it** (sessions 18-20): its threshold comes from ISO and stops
+  scaling above ISO 1000. The user's setting (0.33) covers the whole
+  frame from ISO 6400 up; about 0.55 fixes it. Raw denoise before it
+  costs texture; neural restore first is the better order.
 
 ## Samples
 
@@ -1552,6 +1561,19 @@ JPEG, gains relative to no sharpening. Results in
   makes it crispier") favors keeping 0.33 at low ISO.
 - Suggested for this setup: keep 0.33 up to about ISO 800, 0.55 from
   ISO 6400, 0.60 at 25600. Not measured between 800 and 6400.
+- Addendum (`rpu_csmid.py`, render agent): the holiday set has only one
+  image between ISO 800 and 6400 (P1378783, ISO 1000; the histogram is
+  331 at ISO 200, the rest at 250-1000 and 6400+), so the raw.pixls.us
+  G9 sample (ISO 3200, a test scene, tiles from its own render) was
+  added; both rendered with the P1378550 history (lens correction set
+  for a different lens, the same across versions). Flat-tile fine luma
+  relative to no sharpening at 0.33 / 0.40 / 0.45 / 0.50: ISO 1000 1.29 /
+  1.02 / 1.00 / 1.00; ISO 3200 1.64 / 1.19 / 1.02 / 1.00. The edge/flat
+  split's flat class picks up the 3200 scene's fine fabric texture, so
+  its flat gain stays above 1.05; the flat tiles are the better
+  measure there. Rough rule for this setup: 0.33 to ISO 800, 0.45 at
+  1000-3200, 0.55 from 6400, 0.60 at 25600. ISO 1600 and 4000-5000 have
+  no samples.
 
 ## Session 20: raw denoise before capture sharpening
 
@@ -1617,76 +1639,64 @@ mid luma (texture), relative to no sharpening and no raw denoise:
    `data/kernels/denoiseprofile.cl` take scalar a and b has not been
    checked.
 
-## Round 3 TODOs (after session 14)
+## Round 3 TODOs (updated after session 20)
 
-State: the measured-noise mode (`bandnoise.patch`, switches in sessions
-6-13; best setting: one transform exponent, inferred "preserve shadows",
-r 8, Wiener luma, leave-block-out 1, despeck 2, chroma guide, shape cap,
-strength about 0.6 / 0.75 / 1.0 at ISO 200 / 640-1000 / 6400+) beats old
-mode and the user's chroma-only preset at high ISO but loses on texture
-to darktable's raw neural denoise and to Topaz in the user's workflow
-(session 14). In priority order:
+State: the measured-noise wavelet mode (`bandnoise.patch`, sessions
+6-13) beats old mode and the user's chroma-only preset at high ISO but
+loses on texture to darktable's raw neural denoise and to Topaz
+(session 14). **Not continued**: neural restore covers the same ground
+better. Since then the main findings were a bug in the Y0U0V0 matrix
+(sessions 15-17) and capture sharpening sharpening the noise before
+denoise sees it (sessions 18-20).
 
-1. **Upstream write-up of the low-risk findings**, for discussion before
-   any code (CONTRIBUTING.md: substantial). The Y0 row went first, on
-   its own: darktable-org/darktable#23265 (2026-11-26, from sessions 15-16,
-   draft in `C:\temp\denoise\issue\`). The others wait for how that one
-   is received. Each stands on its own:
-   - Y0U0V0 luma about 5x and chroma about 0.25x the noise the model
-     assumes: cross-channel correlation after demosaic, and the Y0 row
-     multiplying by sum(1/wb) (`denoiseprofile.c:1311`, session 5);
-   - the specks: dark-skewed noise after the transform, clipped
-     photosites, soft thresholding (session 4), and despeck plus Wiener
-     as a fix (session 8);
-   - capture sharpening in demosaic raises the noise the module sees
-     and old mode does not adapt (session 10);
-   - per-channel profile entries do not fit white-balanced data
-     (session 5);
-   - the rock tint: removing chroma detail while keeping luma detail
-     tints neutral texture, made worse by the white-balance-adaptive
-     transform (session 10).
-   Include the measurements, the scripts that reproduce them, and say
-   plainly that the full new mode does not beat learned denoisers.
-2. **The colored specks** in dark textured areas at ISO 6400+ in the
-   user's workflow (session 14). Not the chroma guide, luma-only Wiener
-   or "preserve shadows". Next: dump U0/V0 detail bands on a P1378607
-   bark crop, check whether they are chroma outliers the despeck pass
-   misses (it tests each channel against its own neighbors), and
-   whether they appear without the user's color balance rgb.
-3. **Decide whether to continue the wavelet mode at all.** If yes, the
-   open items before it could be a real mode: a noise-dependent
-   strength (the matching strength still rises with ISO), the edge halo
-   (session 8), the steep strength response, the noise shape from the
-   profile instead of a fixed table (session 12), the OpenCL path, a
-   params version with old histories unchanged, other cameras.
-4. **Why the neural denoise loses to Topaz on detail** (session 14).
-   Model and training questions more than darktable ones; possibly
-   tile size, input normalization or the strength blend in
-   `src/common/ai/restore_raw_bayer.c`. Read before measuring.
-5. **Profiling convention** (round 2 candidate 3): profiles are measured
+Open, waiting on maintainers:
+
+1. **The Y0 row, darktable-org/darktable#23265** (posted 2026-11-26,
+   with a follow-up comment on the per-channel exponents, session 17).
+   If accepted: params v13 with a backward-compatibility flag (the
+   pattern of `fix_anscombe_and_nlmeans_norm` / `use_new_vst`), the 2.5
+   Y0U0V0 compensation dropped for new edits, CPU and OpenCL (the user
+   tests OpenCL on Windows), a new reference for integration test 0013,
+   a default strength chosen with the maintainers, optionally one
+   transform exponent in Y0U0V0 mode.
+2. **Capture sharpening's threshold** (sessions 18-19), not yet drafted:
+   held until #23265 gets a response. Report as a bounded finding (the
+   ISO-based estimate is fixed above ISO 1000 and the mask opens on noise
+   at high ISO), with the noise-profile-based threshold as a hypothesis,
+   per the session 18 review.
+
+Low priority:
+
+3. **Profiling convention** (round 2 candidate 3): profiles are measured
    without white balance and with the finest Haar diagonal coefficient
-   (sessions 3, 5), both unlike what the module sees.
-6. Smaller loose ends:
-   - (done, session 14 addendum) my render of the user's default
-     history differed from their export: the RW2 CA correction from
-     `rw2-tca-pr` in their build. Compare future workflow renders with
-     their build (`/home/smuj/git/darktable-3ad3ebf6de/build`);
-   - the default "as shot" white balance comes with late correction,
-     so without color calibration the output is camera reference, not
-     as shot (session 9 note);
-   - `holiday.py`'s tile renders (`HOLIDAY_TILES=1`) do not match full
-     frames at r 8; widen the margin or drop the option.
+   (sessions 3, 5), both unlike what the module sees. A hypothesis that
+   would need a simulation study (white CFA noise through demosaic,
+   measured both ways) before it means anything.
 
-Scratch data that later steps may reuse, moved off WSL to
-`C:\temp\denoise\scratch\` as tar archives that unpack to the paths
-the scripts use (`cd /tmp && tar xf /c/temp/denoise/scratch/hol.tar`):
-`hol.tar` (`/tmp/hol`: run/ with the 79 holiday images' tiles of every
-variant, metrics and XMPs, plus the shape logs and helper scripts,
-2.7 GB), `wf.tar` and `wf_tif.tar` (`/tmp/wf/run`: session 14 tiles,
-metrics, XMPs, and the full renders from this branch's build, 0.1 and
-2.4 GB), `wf2.tar` (`/tmp/wf2/run`: the same rendered with the user's
-build, the ones to use, 2.5 GB), `dn11.tar`
-(`/tmp/dn11` and `/tmp/dn10`: session 9-10 renders, 1.1 GB).
+Closed:
+
+- The specks (sessions 4, 8), capture sharpening breaking old mode
+  (session 10, explained by sessions 18-19), the per-channel profile
+  entries (session 5) and the rock tint (sessions 10, 17): algorithm
+  limitations or design choices, not bugs; no separate upstream reports.
+- The colored specks in dark texture (session 14): only in the
+  measured-noise mode, which is not continued.
+- Neural restore against Topaz (session 14): Topaz is commercial and
+  trained at a different scale; neural restore being behind is expected,
+  not a darktable defect.
+- The white balance late correction (session 9): intended behavior.
+- `HOLIDAY_TILES` not matching full frames at r 8: only used by the
+  measured-noise mode.
+- The user's workflow (session 19): they tune capture sharpening by hand
+  per image; no presets.
+
+Scratch data: kept in `C:\temp\denoise\scratch\` are `y0.tar`,
+`rpu.tar` and `wbexp.tar` (sessions 15-17, evidence for #23265) and
+`cs.tar`, `cs2.tar`, `cswf.tar`, `rawdn.tar`, `csmid.tar` (sessions
+18-20). The
+archives of sessions 9-14 (`hol.tar`, `wf.tar`, `wf_tif.tar`, `wf2.tar`,
+`dn11.tar`) were deleted with the measured-noise mode; their results are
+in the notes and in `C:\temp\denoise\compare\`.
 
 ## Round 2 candidates
 
