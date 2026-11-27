@@ -1553,6 +1553,46 @@ JPEG, gains relative to no sharpening. Results in
 - Suggested for this setup: keep 0.33 up to about ISO 800, 0.55 from
   ISO 6400, 0.60 at 25600. Not measured between 800 and 6400.
 
+## Session 20: raw denoise before capture sharpening
+
+Raw denoise already runs before demosaic (`hotpixels, rawdenoise,
+demosaic` in the user's module order), so it is the one classic
+denoiser capture sharpening sees the result of. `rpu_rawdn.py` (render
+agent, claude-sonnet-5.5) adds it at thresholds 0.005-0.03 to the
+user's histories (their chroma-only denoise kept), with capture
+sharpening at 0.33 and 0.55, on P1378607/616/610 with session 19's
+tiles, against no sharpening and the user's neural 50 and Topaz exports
+(Windows build). Results in `C:\temp\denoise\compare\cs\rawdenoise\`.
+
+P1378616 (ISO 20000), flat-tile fine luma (noise) and textured-tile
+mid luma (texture), relative to no sharpening and no raw denoise:
+
+| version | flat fine | tex mid |
+|---|---|---|
+| user's setting (cs 0.33) | 1.80 | 1.18 |
+| cs 0.55 | 1.02 | 1.06 |
+| raw denoise 0.01, cs 0.33 | 1.31 | 1.03 |
+| raw denoise 0.02, cs 0.33 | 0.86 | 0.88 |
+| raw denoise 0.03, cs 0.33 | 0.53 | 0.75 |
+| raw denoise 0.02, cs 0.55 | 0.53 | 0.76 |
+| neural 50 (export) | 0.77 | 1.05 |
+| Topaz (export) | 0.19 | 1.11 |
+
+- Raw denoise does calm the sharpening mask (mean 0.99 to 0.87 at 0.02,
+  0.69 at 0.03), but only by removing texture with the noise: every
+  setting that brings flat grain below no sharpening also loses 12-25%
+  of the texture. The neural export has less flat grain than raw
+  denoise 0.02 and keeps all the texture; Topaz is far ahead of both.
+  P1378607 and P1378610 behave the same.
+- Raw denoise at 0.02-0.03 leaves isolated dark specks on the flat sky
+  (visible in the montage), as soft thresholding of outliers does
+  (session 4).
+- So for this workflow: raw denoise is not worth it; at high ISO either
+  capture sharpening at 0.55 (keeps the look, removes the sharpened
+  grain) or neural restore first and the usual 0.33.
+- The edge/flat gain metric is not meaningful across denoisers (any
+  denoiser lowers both); the table uses noise and texture instead.
+
 ## Round 1 TODOs
 
 1. **Done (session 4): what produces the dark specks.** The concave
